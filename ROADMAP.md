@@ -16,6 +16,8 @@ This document serves as the persistent context for the Veu protocol's developmen
 
 ### POC Layer (Implementation)
 - **Phase 1 — Crypto Core** (`packages/veu-crypto/`): Swift Package implementing AES-256-GCM scramble/unscramble, HMAC-SHA-256 Glaze Seed derivation, Circle Key + Artifact Key management, and Burn Engine. Fully unit tested (`swift test`).
+- **Phase 2 — The Handshake** (`packages/veu-auth/`): Swift Package implementing Dead Link URI generation/parsing (Ed25519 signed), X25519 ECDH key exchange, HKDF-SHA-256 Circle key derivation, SAS 8-digit short-code + Aura color derivation, HandshakeSession orchestrator (7-phase state machine), and SQLite Ledger bootstrap (LEDGER.sql). 61 tests passing (`swift test`).
+- **Phase 3 — The Glaze Engine** (`packages/veu-glaze/`): Swift Package implementing GLSL→Metal shader translation (AURA + EMERALD), MetalRenderer base pipeline with runtime MSL compilation, AuraView + EmeraldView SwiftUI wrappers, Vue Toggle (long-press → biometric → reveal), and HapticEngine (heartbeat/burn/hum). 34 tests passing (`swift test`).
 
 ## 🏗️ POC Implementation Queue
 
@@ -31,10 +33,10 @@ This document serves as the persistent context for the Veu protocol's developmen
 ### Phase 3 — The Glaze Engine (`veu-glaze` + `veu-app`) 🎨
 > _Wire the GLSL shaders to real cryptographic data._
 
-- [ ] `AuraView` (SwiftUI + Metal): load `AURA.glsl`, feed `u_seed_color` from Glaze Seed
-- [ ] `EmeraldView`: load `EMERALD.glsl`, drive `u_phase` from handshake state machine
-- [ ] Vue Toggle: long-press → FaceID → shader opacity 0 → reveal artifact
-- [ ] `HapticEngine`: handshake heartbeat, burn click, vue hum
+- [x] `AuraView` (SwiftUI + Metal): load `AURA.glsl`, feed `u_seed_color` from Glaze Seed
+- [x] `EmeraldView`: load `EMERALD.glsl`, drive `u_phase` from handshake state machine
+- [x] Vue Toggle: long-press → FaceID → shader opacity 0 → reveal artifact
+- [x] `HapticEngine`: handshake heartbeat, burn click, vue hum
 
 ### Phase 4 — Ghost Network (minimal) 📡
 > _Artifact sync between two devices with no central server._
