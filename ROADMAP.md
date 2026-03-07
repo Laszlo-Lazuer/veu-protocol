@@ -22,10 +22,10 @@ This document serves as the persistent context for the Veu protocol's developmen
 ### Phase 2 — The Handshake (`veu-auth`) 🤝
 > _Two devices perform a live Emerald Handshake — the core trust primitive._
 
-- [ ] Dead Link URI generation (`veu://handshake?pk=…&exp=…&sig=…`)
-- [ ] Curve25519 ECDH key exchange → Shared Secret derivation
-- [ ] SAS derivation: Shared Secret → 8-digit code + Aura color hex
-- [ ] Bootstrap `LEDGER.sql` SQLite schema into a Swift Package (`veu-auth`)
+- [x] Dead Link URI generation (`veu://handshake?pk=…&exp=…&sig=…`)
+- [x] Curve25519 ECDH key exchange → Shared Secret derivation
+- [x] SAS derivation: Shared Secret → 8-digit code + Aura color hex
+- [x] Bootstrap `LEDGER.sql` SQLite schema into a Swift Package (`veu-auth`)
 - [ ] Minimal handshake UI: QR code display + 8-digit confirmation screen
 
 ### Phase 3 — The Glaze Engine (`veu-glaze` + `veu-app`) 🎨
