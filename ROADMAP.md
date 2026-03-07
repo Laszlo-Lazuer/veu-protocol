@@ -18,6 +18,7 @@ This document serves as the persistent context for the Veu protocol's developmen
 - **Phase 1 — Crypto Core** (`packages/veu-crypto/`): Swift Package implementing AES-256-GCM scramble/unscramble, HMAC-SHA-256 Glaze Seed derivation, Circle Key + Artifact Key management, and Burn Engine. Fully unit tested (`swift test`).
 - **Phase 2 — The Handshake** (`packages/veu-auth/`): Swift Package implementing Dead Link URI generation/parsing (Ed25519 signed), X25519 ECDH key exchange, HKDF-SHA-256 Circle key derivation, SAS 8-digit short-code + Aura color derivation, HandshakeSession orchestrator (7-phase state machine), and SQLite Ledger bootstrap (LEDGER.sql). 61 tests passing (`swift test`).
 - **Phase 3 — The Glaze Engine** (`packages/veu-glaze/`): Swift Package implementing GLSL→Metal shader translation (AURA + EMERALD), MetalRenderer base pipeline with runtime MSL compilation, AuraView + EmeraldView SwiftUI wrappers, Vue Toggle (long-press → biometric → reveal), and HapticEngine (heartbeat/burn/hum). 34 tests passing (`swift test`).
+- **Phase 4 — Ghost Network** (`packages/veu-ghost/`): Swift Package implementing mDNS/Bonjour peer discovery (LocalPulse), AES-256-GCM encrypted TCP transport (GhostConnection), vector clock delta-sync (SyncEngine), Codable protocol messages (SyncRequest/ArtifactPush/BurnNotice/Ack), and GhostNode coordinator. 44 tests passing (`swift test`).
 
 ## 🏗️ POC Implementation Queue
 
@@ -41,9 +42,9 @@ This document serves as the persistent context for the Veu protocol's developmen
 ### Phase 4 — Ghost Network (minimal) 📡
 > _Artifact sync between two devices with no central server._
 
-- [ ] Local Pulse: mDNS/Bonjour peer discovery on same Wi-Fi
-- [ ] Artifact publish: encrypt artifact → push to peer over local connection
-- [ ] Artifact Ledger sync: update `LEDGER.sql` on receive, drive UI
+- [x] Local Pulse: mDNS/Bonjour peer discovery on same Wi-Fi
+- [x] Artifact publish: encrypt artifact → push to peer over local connection
+- [x] Artifact Ledger sync: update `LEDGER.sql` on receive, drive UI
 - [ ] _Post-POC: IPFS + Tor integration_
 
 ## 🎯 POC Demo Script
