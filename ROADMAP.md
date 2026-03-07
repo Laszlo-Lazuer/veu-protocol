@@ -1,8 +1,10 @@
 # Veu Protocol: Development Roadmap & "What's Next"
 
-This document serves as the persistent context for the Veu protocol's development. As of **2026-03-04**, we have completed the foundational "Fortress" layer.
+This document serves as the persistent context for the Veu protocol's development. As of **2026-03-07**, we are in active POC implementation.
 
 ## ✅ Completed Foundations
+
+### Fortress Layer (Specs)
 - **`veu-crypto`**: Emerald Handshake and artifact Burn/Purge specification.
 - **`veu-auth`**: Hardware-bound security (App Attest) and Dead Link ephemeral invites.
 - **`veu-protocol`**: The "Ghost Network" sync layer and Zero-Aware delta-sync.
@@ -12,6 +14,41 @@ This document serves as the persistent context for the Veu protocol's developmen
 - **The Emerald Handshake Visuals** (`packages/veu-crypto/EMERALD_HANDSHAKE.md`, `packages/veu-app/EMERALD.glsl`): Full spec and GLSL implementation of the 7-phase handshake ceremony.
 - **Post-Quantum Hardening** (`packages/veu-crypto/POST_QUANTUM.md`): Migration strategy to ML-KEM-1024, ML-DSA-Dilithium-5, and SPHINCS+ with hybrid transition plan.
 
-## 🏗️ Next Implementation Bricks (Queue)
+### POC Layer (Implementation)
+- **Phase 1 — Crypto Core** (`packages/veu-crypto/`): Swift Package implementing AES-256-GCM scramble/unscramble, HMAC-SHA-256 Glaze Seed derivation, Circle Key + Artifact Key management, and Burn Engine. Fully unit tested (`swift test`).
 
-> _Placeholder — future work items to be added here._
+## 🏗️ POC Implementation Queue
+
+### Phase 2 — The Handshake (`veu-auth`) 🤝
+> _Two devices perform a live Emerald Handshake — the core trust primitive._
+
+- [ ] Dead Link URI generation (`veu://handshake?pk=…&exp=…&sig=…`)
+- [ ] Curve25519 ECDH key exchange → Shared Secret derivation
+- [ ] SAS derivation: Shared Secret → 8-digit code + Aura color hex
+- [ ] Bootstrap `LEDGER.sql` SQLite schema into a Swift Package (`veu-auth`)
+- [ ] Minimal handshake UI: QR code display + 8-digit confirmation screen
+
+### Phase 3 — The Glaze Engine (`veu-glaze` + `veu-app`) 🎨
+> _Wire the GLSL shaders to real cryptographic data._
+
+- [ ] `AuraView` (SwiftUI + Metal): load `AURA.glsl`, feed `u_seed_color` from Glaze Seed
+- [ ] `EmeraldView`: load `EMERALD.glsl`, drive `u_phase` from handshake state machine
+- [ ] Vue Toggle: long-press → FaceID → shader opacity 0 → reveal artifact
+- [ ] `HapticEngine`: handshake heartbeat, burn click, vue hum
+
+### Phase 4 — Ghost Network (minimal) 📡
+> _Artifact sync between two devices with no central server._
+
+- [ ] Local Pulse: mDNS/Bonjour peer discovery on same Wi-Fi
+- [ ] Artifact publish: encrypt artifact → push to peer over local connection
+- [ ] Artifact Ledger sync: update `LEDGER.sql` on receive, drive UI
+- [ ] _Post-POC: IPFS + Tor integration_
+
+## 🎯 POC Demo Script
+
+1. Alice opens Veu → generates Ghost identity from seed
+2. Alice generates a Dead Link → Bob scans QR
+3. Both see matching 8-digit code → tap "Seal" → Emerald bloom fires ✅
+4. Alice captures a photo → app encrypts it → Aura shader renders the Glaze
+5. Bob's phone receives the artifact over local Wi-Fi
+6. Bob long-presses → FaceID → shader lifts → photo revealed
