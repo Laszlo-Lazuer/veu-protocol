@@ -7,9 +7,11 @@ This document serves as the persistent context for the Veu protocol's developmen
 - **`veu-auth`**: Hardware-bound security (App Attest) and Dead Link ephemeral invites.
 - **`veu-protocol`**: The "Ghost Network" sync layer and Zero-Aware delta-sync.
 - **`veu-app`**: The "Double Mirror" UX interaction and the Zero-Aware EULA.
+- **The Aura Shader** (`packages/veu-app/AURA.glsl`): Animated, reactive identity Aura GLSL fragment shader seeded by the user's key hash.
+- **The Local Artifact Ledger** (`packages/veu-protocol/LEDGER.sql`): SQLite schema for Zero-Aware, device-local artifact tracking with Burn/Purge and encrypted metadata.
+- **The Emerald Handshake Visuals** (`packages/veu-crypto/EMERALD_HANDSHAKE.md`, `packages/veu-app/EMERALD.glsl`): Full spec and GLSL implementation of the 7-phase handshake ceremony.
+- **Post-Quantum Hardening** (`packages/veu-crypto/POST_QUANTUM.md`): Migration strategy to ML-KEM-1024, ML-DSA-Dilithium-5, and SPHINCS+ with hybrid transition plan.
 
 ## 🏗️ Next Implementation Bricks (Queue)
-1. **The Aura Shader Specification** (`packages/veu-app/AURA.glsl`)
-2. **The Local Artifact Ledger** (`packages/veu-protocol/LEDGER.sql`)
-3. **The Emerald Handshake Visuals**
-4. **Post-Quantum Hardening**
+
+> _Placeholder — future work items to be added here._
