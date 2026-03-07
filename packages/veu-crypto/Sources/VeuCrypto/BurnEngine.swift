@@ -22,12 +22,15 @@ public final class BurnEngine {
     ///   - artifactKey: The key to destroy.
     ///   - artifactID:  The UUID of the artifact whose key is being burned.
     public func burn(artifactKey: ArtifactKey, artifactID: UUID) {
-        // Overwrite the key bytes with zeroes before releasing the reference.
+        // Best-effort POC zero-fill: attempt to overwrite the SymmetricKey backing bytes.
+        // NOTE: SymmetricKey storage is immutable from Swift's type system; the cast to
+        //       UnsafeMutableRawPointer is undefined behaviour and the compiler/runtime
+        //       may optimise away the write or operate on a copy.
+        // TODO: In production, replace this with Secure Enclave key deletion, which
+        //       provides a hardware-guaranteed, non-recoverable purge of key material.
         artifactKey.symmetricKey.withUnsafeBytes { ptr in
-            // Cast away const to perform the zero-fill on the underlying storage.
-            // In practice the SymmetricKey's backing store is immutable from Swift's
-            // perspective, so this is a best-effort scrub for the POC.
-            let mutablePtr = UnsafeMutableRawPointer(mutating: ptr.baseAddress!)
+            guard let baseAddress = ptr.baseAddress else { return }
+            let mutablePtr = UnsafeMutableRawPointer(mutating: baseAddress)
             memset(mutablePtr, 0, ptr.count)
         }
         burnedIDs.insert(artifactID)
