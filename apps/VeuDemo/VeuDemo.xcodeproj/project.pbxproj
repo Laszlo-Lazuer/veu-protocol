@@ -1,0 +1,360 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5A5E1402DDC0BC55E45F4156 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F3AA7928FFE73127F07721 /* AppCoordinator.swift */; };
+		5E7DE944E46E9842130F777C /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFA41F05EEF00B49E5C7B7DE /* QRScannerView.swift */; };
+		8D56624AC4BE033DE4D3CAD8 /* VeuApp in Frameworks */ = {isa = PBXBuildFile; productRef = B9E2AA64DA70016AF8EA2575 /* VeuApp */; };
+		B0228E5437E38AE54D89E511 /* DemoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 217FD2B80CA48B526D87EFBA /* DemoRootView.swift */; };
+		D631FD8B8F9B4AA865189530 /* QRCodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E76A74105A7943CBC506EC /* QRCodeView.swift */; };
+		EAB47BBB10498BEC4B063943 /* VeuDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */; };
+		F1BC7D8AE93E2DD6ABAC3BF2 /* CameraCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		17F3AA7928FFE73127F07721 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
+		217FD2B80CA48B526D87EFBA /* DemoRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoRootView.swift; sourceTree = "<group>"; };
+		59E76A74105A7943CBC506EC /* QRCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeView.swift; sourceTree = "<group>"; };
+		5A5B9F79E06DD24EDC9636F2 /* VeuDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VeuDemo.entitlements; sourceTree = "<group>"; };
+		9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeuDemoApp.swift; sourceTree = "<group>"; };
+		9E51303EB4336A9287405B3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		AFA41F05EEF00B49E5C7B7DE /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
+		DDEDA00116456D774D67AAB5 /* veu-app */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "veu-app"; path = "../../packages/veu-app"; sourceTree = SOURCE_ROOT; };
+		EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureView.swift; sourceTree = "<group>"; };
+		EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = VeuDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F47113528269B4FAC730B764 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8D56624AC4BE033DE4D3CAD8 /* VeuApp in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		449DF63C8D3D2AF93103BD05 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		49012D2C3C17C29D05ABB609 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				DDEDA00116456D774D67AAB5 /* veu-app */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		891399D3B6A6D799B9F0F389 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				17F3AA7928FFE73127F07721 /* AppCoordinator.swift */,
+				EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */,
+				217FD2B80CA48B526D87EFBA /* DemoRootView.swift */,
+				9E51303EB4336A9287405B3A /* Info.plist */,
+				59E76A74105A7943CBC506EC /* QRCodeView.swift */,
+				AFA41F05EEF00B49E5C7B7DE /* QRScannerView.swift */,
+				5A5B9F79E06DD24EDC9636F2 /* VeuDemo.entitlements */,
+				9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		B079BA376C76C9F5568B2811 = {
+			isa = PBXGroup;
+			children = (
+				49012D2C3C17C29D05ABB609 /* Packages */,
+				891399D3B6A6D799B9F0F389 /* Sources */,
+				449DF63C8D3D2AF93103BD05 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		027AC9AF77126314BB4BDE61 /* VeuDemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 55B57DDEFC805467B7EDF546 /* Build configuration list for PBXNativeTarget "VeuDemo" */;
+			buildPhases = (
+				4931EC50B240A16744C70548 /* Sources */,
+				F47113528269B4FAC730B764 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VeuDemo;
+			packageProductDependencies = (
+				B9E2AA64DA70016AF8EA2575 /* VeuApp */,
+			);
+			productName = VeuDemo;
+			productReference = EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9043BC97485D7404E6E94C66 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					027AC9AF77126314BB4BDE61 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 28A2F1FE805847DD13E46DBE /* Build configuration list for PBXProject "VeuDemo" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = B079BA376C76C9F5568B2811;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1E964B206D19C09832ACA106 /* XCLocalSwiftPackageReference "../../packages/veu-app" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 449DF63C8D3D2AF93103BD05 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				027AC9AF77126314BB4BDE61 /* VeuDemo */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4931EC50B240A16744C70548 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A5E1402DDC0BC55E45F4156 /* AppCoordinator.swift in Sources */,
+				F1BC7D8AE93E2DD6ABAC3BF2 /* CameraCaptureView.swift in Sources */,
+				B0228E5437E38AE54D89E511 /* DemoRootView.swift in Sources */,
+				D631FD8B8F9B4AA865189530 /* QRCodeView.swift in Sources */,
+				5E7DE944E46E9842130F777C /* QRScannerView.swift in Sources */,
+				EAB47BBB10498BEC4B063943 /* VeuDemoApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		004DFCBA4A1C6E861D3358D8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		59A6A47A5329A692D0CDCC59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		94154D012E6F3E20947619C4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		98A4C24C29C6AEAA54870B62 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		28A2F1FE805847DD13E46DBE /* Build configuration list for PBXProject "VeuDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				94154D012E6F3E20947619C4 /* Debug */,
+				98A4C24C29C6AEAA54870B62 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		55B57DDEFC805467B7EDF546 /* Build configuration list for PBXNativeTarget "VeuDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				59A6A47A5329A692D0CDCC59 /* Debug */,
+				004DFCBA4A1C6E861D3358D8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		1E964B206D19C09832ACA106 /* XCLocalSwiftPackageReference "../../packages/veu-app" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../packages/veu-app";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B9E2AA64DA70016AF8EA2575 /* VeuApp */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VeuApp;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 9043BC97485D7404E6E94C66 /* Project object */;
+}

@@ -1,0 +1,32 @@
+name: VeuDemo
+options:
+  bundleIdPrefix: com.veu.protocol
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  VeuApp:
+    path: ../../packages/veu-app
+
+targets:
+  VeuDemo:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.veu.protocol.demo
+        MARKETING_VERSION: "0.6.0"
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_FILE: Sources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/VeuDemo.entitlements
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: NO
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: VeuApp
+    resources:
+      - path: Assets.xcassets
