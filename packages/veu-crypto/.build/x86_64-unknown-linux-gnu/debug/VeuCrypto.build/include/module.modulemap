@@ -1,0 +1,3 @@
+module VeuCrypto {
+    header "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/include/VeuCrypto-Swift.h"
+}

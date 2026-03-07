@@ -1,0 +1,54 @@
+{
+  "": {
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/master.swiftdeps"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/ArtifactKey.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/ArtifactKey.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/ArtifactKey.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/ArtifactKey~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/ArtifactKey.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/ArtifactKey.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/BurnEngine.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/BurnEngine.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/BurnEngine.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/BurnEngine~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/BurnEngine.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/BurnEngine.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/CircleKey.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/CircleKey.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/CircleKey.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/CircleKey~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/CircleKey.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/CircleKey.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/GlazeSeed.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/GlazeSeed.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/GlazeSeed.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/GlazeSeed~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/GlazeSeed.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/GlazeSeed.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/Scramble.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/Scramble.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/Scramble.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/Scramble~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/Scramble.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/Scramble.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/VeuArtifact.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuArtifact.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuArtifact.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuArtifact~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuArtifact.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuArtifact.dia"
+  },
+  "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/VeuCryptoError.swift": {
+    "dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuCryptoError.d",
+    "object": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuCryptoError.swift.o",
+    "swiftmodule": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuCryptoError~partial.swiftmodule",
+    "swift-dependencies": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuCryptoError.swiftdeps",
+    "diagnostics": "/home/runner/work/veu-protocol/veu-protocol/packages/veu-crypto/.build/x86_64-unknown-linux-gnu/debug/VeuCrypto.build/VeuCryptoError.dia"
+  }
+}
