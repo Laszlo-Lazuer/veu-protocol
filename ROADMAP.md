@@ -19,8 +19,7 @@ This document serves as the persistent context for the Veu protocol's developmen
 - **Phase 2 — The Handshake** (`packages/veu-auth/`): Swift Package implementing Dead Link URI generation/parsing (Ed25519 signed), X25519 ECDH key exchange, HKDF-SHA-256 Circle key derivation, SAS 8-digit short-code + Aura color derivation, HandshakeSession orchestrator (7-phase state machine), and SQLite Ledger bootstrap (LEDGER.sql). 61 tests passing (`swift test`).
 - **Phase 3 — The Glaze Engine** (`packages/veu-glaze/`): Swift Package implementing GLSL→Metal shader translation (AURA + EMERALD), MetalRenderer base pipeline with runtime MSL compilation, AuraView + EmeraldView SwiftUI wrappers, Vue Toggle (long-press → biometric → reveal), and HapticEngine (heartbeat/burn/hum). 34 tests passing (`swift test`).
 - **Phase 4 — Ghost Network** (`packages/veu-ghost/`): Swift Package implementing mDNS/Bonjour peer discovery (LocalPulse), AES-256-GCM encrypted TCP transport (GhostConnection), vector clock delta-sync (SyncEngine), Codable protocol messages (SyncRequest/ArtifactPush/BurnNotice/Ack), and GhostNode coordinator. 44 tests passing (`swift test`).
-
-## 🏗️ POC Implementation Queue
+- **Phase 5 — POC Demo App** (`packages/veu-app/`): Swift Package integrating all four packages into a runnable app layer. Identity model (Ed25519 keypair + callsign + Aura seed), AppState (circle management + Ledger), HandshakeViewModel (full Emerald Handshake flow), TimelineViewModel (compose/encrypt/burn artifacts), NetworkService (GhostNode lifecycle), and SwiftUI views (Home/Identity/Handshake/Timeline/Compose). 22 tests passing (`swift test`).
 
 ### Phase 2 — The Handshake (`veu-auth`) 🤝
 > _Two devices perform a live Emerald Handshake — the core trust primitive._
@@ -29,7 +28,7 @@ This document serves as the persistent context for the Veu protocol's developmen
 - [x] Curve25519 ECDH key exchange → Shared Secret derivation
 - [x] SAS derivation: Shared Secret → 8-digit code + Aura color hex
 - [x] Bootstrap `LEDGER.sql` SQLite schema into a Swift Package (`veu-auth`)
-- [ ] Minimal handshake UI: QR code display + 8-digit confirmation screen
+- [x] Minimal handshake UI: QR code display + 8-digit confirmation screen
 
 ### Phase 3 — The Glaze Engine (`veu-glaze` + `veu-app`) 🎨
 > _Wire the GLSL shaders to real cryptographic data._
@@ -46,6 +45,16 @@ This document serves as the persistent context for the Veu protocol's developmen
 - [x] Artifact publish: encrypt artifact → push to peer over local connection
 - [x] Artifact Ledger sync: update `LEDGER.sql` on receive, drive UI
 - [ ] _Post-POC: IPFS + Tor integration_
+
+### Phase 5 — POC Demo App (`veu-app`) 📱
+> _Integration app wiring all packages into a runnable on-device demo._
+
+- [x] Identity model: Ed25519 keypair generation, callsign derivation, Aura seed
+- [x] AppState: central state manager for identity, circles, and Ledger
+- [x] HandshakeViewModel: Dead Link → QR → short code → confirm → Circle key
+- [x] TimelineViewModel: compose → encrypt → Ledger insert → Glaze seed colors
+- [x] NetworkService: GhostNode lifecycle wrapper with sync delegate bridging
+- [x] SwiftUI views: HomeView, IdentityView, HandshakeView, TimelineView, ComposeView
 
 ## 🎯 POC Demo Script
 
