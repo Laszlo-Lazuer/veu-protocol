@@ -46,7 +46,7 @@ public final class AuraRenderer: MetalRenderer {
         drawFullscreenQuad(
             in: view,
             uniformBytes: &uniforms,
-            uniformLength: MemoryLayout<AuraUniforms>.size
+            uniformLength: MemoryLayout<AuraUniforms>.stride
         )
     }
 }

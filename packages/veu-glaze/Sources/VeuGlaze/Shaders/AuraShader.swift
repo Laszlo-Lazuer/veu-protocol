@@ -13,19 +13,19 @@ import simd
 public struct AuraUniforms {
     /// Elapsed time in seconds (drives animation).
     public var time: Float
+    /// Handshake/sync activity intensity `[0, 1]`.  0 = resting, 1 = flare.
+    public var pulse: Float
     /// Viewport dimensions in pixels `(width, height)`.
     public var resolution: SIMD2<Float>
     /// RGB color derived from the user's Glaze Seed, each component in `[0, 1]`.
     public var seedColor: SIMD3<Float>
-    /// Handshake/sync activity intensity `[0, 1]`.  0 = resting, 1 = flare.
-    public var pulse: Float
 
     public init(time: Float = 0, resolution: SIMD2<Float> = .zero,
                 seedColor: SIMD3<Float> = .zero, pulse: Float = 0) {
         self.time = time
+        self.pulse = pulse
         self.resolution = resolution
         self.seedColor = seedColor
-        self.pulse = pulse
     }
 }
 
@@ -52,9 +52,9 @@ public enum AuraShader {
 
     struct AuraUniforms {
         float  time;
+        float  pulse;
         float2 resolution;
         float3 seedColor;
-        float  pulse;
     };
 
     // Fullscreen triangle (no vertex buffer needed)

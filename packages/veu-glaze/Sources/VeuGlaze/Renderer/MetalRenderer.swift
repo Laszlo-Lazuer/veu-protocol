@@ -109,7 +109,9 @@ open class MetalRenderer: NSObject, MTKViewDelegate {
     ) {
         guard let pipelineState = pipelineState,
               let drawable = view.currentDrawable,
-              let descriptor = view.currentRenderPassDescriptor else { return }
+              let descriptor = view.currentRenderPassDescriptor,
+              view.drawableSize.width > 0,
+              view.drawableSize.height > 0 else { return }
 
         descriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.039, green: 0.039, blue: 0.039, alpha: 1.0)
         descriptor.colorAttachments[0].loadAction = .clear
