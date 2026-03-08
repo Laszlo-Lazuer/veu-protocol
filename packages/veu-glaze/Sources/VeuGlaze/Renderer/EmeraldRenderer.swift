@@ -47,7 +47,7 @@ public final class EmeraldRenderer: MetalRenderer {
         drawFullscreenQuad(
             in: view,
             uniformBytes: &uniforms,
-            uniformLength: MemoryLayout<EmeraldUniforms>.size
+            uniformLength: MemoryLayout<EmeraldUniforms>.stride
         )
     }
 }
