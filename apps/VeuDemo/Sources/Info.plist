@@ -22,6 +22,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_veu-ghost._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Veu uses Face ID to authenticate before revealing protected content.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Veu discovers peers on your local network for encrypted artifact sync.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
@@ -32,16 +42,6 @@
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Veu uses Face ID to authenticate before revealing protected content.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Veu discovers peers on your local network for encrypted artifact sync.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_veu-ghost._tcp</string>
 	</array>
 </dict>
 </plist>
