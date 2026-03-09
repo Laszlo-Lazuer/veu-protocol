@@ -10,6 +10,7 @@ import Crypto
 /// Represents a single artifact in the timeline.
 public struct TimelineEntry: Equatable {
     public let cid: String
+    public let artifactType: String
     public let glazeSeedColor: (r: Float, g: Float, b: Float)
     public let burnAfter: Int?
     /// In-memory plaintext for reveal (POC only — never persisted).
@@ -75,6 +76,7 @@ public final class TimelineViewModel {
 
             return TimelineEntry(
                 cid: detail.cid,
+                artifactType: detail.artifactType,
                 glazeSeedColor: color,
                 burnAfter: detail.burnAfter,
                 plaintextData: plaintext

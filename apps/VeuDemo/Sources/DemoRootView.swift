@@ -23,17 +23,23 @@ struct DemoRootView: View {
                 }
                 .tag(1)
 
+            ChatTab(appState: appState, coordinator: coordinator)
+                .tabItem {
+                    Label("Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                }
+                .tag(2)
+
             DemoTimelineTab(appState: appState, coordinator: coordinator)
                 .tabItem {
                     Label("Timeline", systemImage: "photo.on.rectangle.angled")
                 }
-                .tag(2)
+                .tag(3)
 
             NetworkTab(coordinator: coordinator)
                 .tabItem {
                     Label("Network", systemImage: "antenna.radiowaves.left.and.right")
                 }
-                .tag(3)
+                .tag(4)
         }
         .tint(.green)
     }
@@ -295,6 +301,143 @@ struct ProximitySearchView: View {
             }
             .buttonStyle(.bordered)
             .tint(.red)
+        }
+    }
+}
+
+// MARK: - Chat Tab
+
+struct ChatTab: View {
+    let appState: AppState
+    @ObservedObject var coordinator: AppCoordinator
+    @State private var messageText = ""
+    @FocusState private var isInputFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if appState.activeCircleID == nil {
+                    VStack(spacing: 12) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No Active Circle")
+                            .font(.headline)
+                        Text("Complete a handshake to start chatting.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else if !coordinator.networkRunning {
+                    VStack(spacing: 12) {
+                        Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("Ghost Network Offline")
+                            .font(.headline)
+                        Text("Start the Ghost Network to send messages.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Button {
+                            coordinator.startNetwork()
+                        } label: {
+                            Label("Start Network", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        // Messages
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(spacing: 8) {
+                                    ForEach(coordinator.chatMessages) { msg in
+                                        ChatBubble(message: msg)
+                                            .id(msg.id)
+                                    }
+                                }
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                            }
+                            .onChange(of: coordinator.chatMessages.count) { _ in
+                                if let last = coordinator.chatMessages.last {
+                                    withAnimation {
+                                        proxy.scrollTo(last.id, anchor: .bottom)
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        // Input bar
+                        HStack(spacing: 12) {
+                            TextField("Message…", text: $messageText, axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .lineLimit(1...4)
+                                .focused($isInputFocused)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(.systemGray6))
+                                .clipShape(RoundedRectangle(cornerRadius: 20))
+
+                            Button {
+                                let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !text.isEmpty else { return }
+                                coordinator.sendMessage(text)
+                                messageText = ""
+                                HapticEngine.vueHum()
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 32))
+                                    .foregroundColor(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                            }
+                            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color(.systemBackground))
+                    }
+                }
+            }
+            .navigationTitle("Encrypted Chat")
+            .onAppear {
+                coordinator.reloadChat()
+            }
+        }
+    }
+}
+
+// MARK: - Chat Bubble
+
+struct ChatBubble: View {
+    let message: ChatMessage
+
+    var body: some View {
+        HStack {
+            if message.isMe { Spacer(minLength: 60) }
+
+            VStack(alignment: message.isMe ? .trailing : .leading, spacing: 4) {
+                if !message.isMe {
+                    Text(message.sender)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fontWeight(.semibold)
+                }
+
+                Text(message.text)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(message.isMe ? Color.green : Color(.systemGray5))
+                    .foregroundColor(message.isMe ? .white : .primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                Text(message.timestamp, style: .time)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
+            if !message.isMe { Spacer(minLength: 60) }
         }
     }
 }
