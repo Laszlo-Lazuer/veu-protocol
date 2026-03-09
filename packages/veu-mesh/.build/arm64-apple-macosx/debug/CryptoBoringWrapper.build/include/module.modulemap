@@ -1,3 +1,0 @@
-module CryptoBoringWrapper {
-    header "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/CryptoBoringWrapper.build/include/CryptoBoringWrapper-Swift.h"
-}
