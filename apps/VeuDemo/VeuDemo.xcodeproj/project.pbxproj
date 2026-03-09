@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		171D5722134E6A61ABAEF502 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D26FF5D58A372992405782B7 /* ChatModels.swift */; };
 		1A4B7F25210261BA5E4215FB /* NearbyInteraction.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 409C07FDD962A59F6CE4C0E2 /* NearbyInteraction.framework */; };
 		222128BE1140D4B2CE0CF689 /* ProximitySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */; };
 		4C6DF7AA427F40E57F6A9855 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34E3966C5F4A4231DE6F1769 /* MultipeerConnectivity.framework */; };
@@ -26,6 +27,7 @@
 		5A5B9F79E06DD24EDC9636F2 /* VeuDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VeuDemo.entitlements; sourceTree = "<group>"; };
 		9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeuDemoApp.swift; sourceTree = "<group>"; };
 		9E51303EB4336A9287405B3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D26FF5D58A372992405782B7 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		DDEDA00116456D774D67AAB5 /* veu-app */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "veu-app"; path = "../../packages/veu-app"; sourceTree = SOURCE_ROOT; };
 		EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureView.swift; sourceTree = "<group>"; };
 		EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VeuDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -66,6 +68,7 @@
 			children = (
 				17F3AA7928FFE73127F07721 /* AppCoordinator.swift */,
 				EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */,
+				D26FF5D58A372992405782B7 /* ChatModels.swift */,
 				217FD2B80CA48B526D87EFBA /* DemoRootView.swift */,
 				9E51303EB4336A9287405B3A /* Info.plist */,
 				1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */,
@@ -154,6 +157,7 @@
 			files = (
 				5A5E1402DDC0BC55E45F4156 /* AppCoordinator.swift in Sources */,
 				F1BC7D8AE93E2DD6ABAC3BF2 /* CameraCaptureView.swift in Sources */,
+				171D5722134E6A61ABAEF502 /* ChatModels.swift in Sources */,
 				B0228E5437E38AE54D89E511 /* DemoRootView.swift in Sources */,
 				222128BE1140D4B2CE0CF689 /* ProximitySession.swift in Sources */,
 				EAB47BBB10498BEC4B063943 /* VeuDemoApp.swift in Sources */,
