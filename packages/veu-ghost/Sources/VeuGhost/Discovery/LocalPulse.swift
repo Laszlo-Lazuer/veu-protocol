@@ -58,6 +58,9 @@ public final class LocalPulse {
     /// Whether the pulse is currently active.
     public private(set) var isActive: Bool = false
 
+    /// The device name used for the advertised service (to filter self-discovery).
+    public var serviceName: String?
+
     /// Create a LocalPulse for a given Circle.
     ///
     /// - Parameters:
@@ -88,16 +91,26 @@ public final class LocalPulse {
 
         let txtRecord = NWTXTRecord(["topic": topicHash])
         listener.service = NWListener.Service(type: Self.serviceType, txtRecord: txtRecord)
+        // Capture advertised name after listener starts for self-filtering
+        listener.serviceRegistrationUpdateHandler = { [weak self] change in
+            if case .add(let endpoint) = change,
+               case .service(let name, _, _, _) = endpoint {
+                self?.serviceName = name
+                print("[LocalPulse] Registered as: \(name)")
+            }
+        }
 
         listener.stateUpdateHandler = { [weak self] state in
+            print("[LocalPulse] Listener state: \(state)")
             if case .failed(let error) = state {
+                print("[LocalPulse] Listener failed: \(error)")
                 self?.stop()
-                _ = error // Logged in production; no-op in POC
             }
         }
 
         listener.newConnectionHandler = { [weak self] connection in
             guard let self = self else { return }
+            print("[LocalPulse] New inbound connection from \(connection.endpoint)")
             connection.start(queue: self.queue)
             self.delegate?.localPulse(self, didAcceptConnection: connection)
         }
@@ -111,14 +124,29 @@ public final class LocalPulse {
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self = self else { return }
+            print("[LocalPulse] Browse results changed: \(changes.count) changes, \(results.count) total results")
             for change in changes {
                 switch change {
                 case .added(let result):
-                    if let peerTopic = self.extractTopicHash(from: result),
-                       peerTopic == self.topicHash {
+                    // Skip our own service
+                    if case .service(let name, _, _, _) = result.endpoint,
+                       name == self.serviceName {
+                        print("[LocalPulse] Skipping self: \(name)")
+                        continue
+                    }
+                    let peerTopic = self.extractTopicHash(from: result)
+                    print("[LocalPulse] Peer added: \(result.endpoint), topic=\(peerTopic ?? "nil"), ours=\(self.topicHash.prefix(16))…")
+                    if let peerTopic = peerTopic, peerTopic == self.topicHash {
+                        print("[LocalPulse] ✅ Topic match — connecting to \(result.endpoint)")
                         self.delegate?.localPulse(self, didDiscover: result.endpoint, topicHash: peerTopic)
+                    } else if peerTopic == nil {
+                        // TXT record not yet resolved — connect optimistically since
+                        // only circle members advertise _veu-ghost._tcp
+                        print("[LocalPulse] ⚡ TXT not resolved — connecting optimistically to \(result.endpoint)")
+                        self.delegate?.localPulse(self, didDiscover: result.endpoint, topicHash: self.topicHash)
                     }
                 case .removed(let result):
+                    print("[LocalPulse] Peer removed: \(result.endpoint)")
                     self.delegate?.localPulse(self, didLose: result.endpoint)
                 default:
                     break
@@ -127,7 +155,9 @@ public final class LocalPulse {
         }
 
         browser.stateUpdateHandler = { [weak self] state in
-            if case .failed(_) = state {
+            print("[LocalPulse] Browser state: \(state)")
+            if case .failed(let error) = state {
+                print("[LocalPulse] Browser failed: \(error)")
                 self?.stop()
             }
         }

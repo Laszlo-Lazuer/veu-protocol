@@ -28,5 +28,7 @@ targets:
         DEVELOPMENT_TEAM: ""
     dependencies:
       - package: VeuApp
+      - sdk: MultipeerConnectivity.framework
+      - sdk: NearbyInteraction.framework
     resources:
       - path: Assets.xcassets

@@ -106,8 +106,6 @@ struct IdentityTab: View {
 struct HandshakeTab: View {
     let appState: AppState
     @ObservedObject var coordinator: AppCoordinator
-    @State private var showScanner = false
-    @State private var showInitiator = false
 
     var body: some View {
         NavigationStack {
@@ -124,11 +122,6 @@ struct HandshakeTab: View {
             }
             .padding()
             .navigationTitle("Emerald Handshake")
-            .onChange(of: coordinator.handshakePhase) { _ in
-                if coordinator.handshakePhase != .initiating {
-                    showInitiator = false
-                }
-            }
         }
     }
 
@@ -137,53 +130,48 @@ struct HandshakeTab: View {
         switch coordinator.handshakePhase {
         case .idle:
             VStack(spacing: 16) {
+                Text("Bring both phones close together")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
                 Button {
-                    showInitiator = true
                     coordinator.initiateHandshake()
                 } label: {
-                    Label("Create Circle", systemImage: "qrcode")
+                    Label("Create Circle", systemImage: "antenna.radiowaves.left.and.right")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
 
                 Button {
-                    showScanner = true
+                    coordinator.joinHandshake()
                 } label: {
-                    Label("Scan to Join", systemImage: "qrcode.viewfinder")
+                    Label("Join Circle", systemImage: "dot.radiowaves.left.and.right")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
             }
-            .sheet(isPresented: $showInitiator) {
-                InitiatorSheet(coordinator: coordinator)
-            }
-            .sheet(isPresented: $showScanner) {
-                ScannerSheet(coordinator: coordinator, isPresented: $showScanner)
-            }
 
-        case .initiating:
-            InitiatorSheet(coordinator: coordinator)
-
-        case .awaiting:
-            VStack(spacing: 12) {
-                ProgressView()
-                Text("Computing shared secret…")
-                    .foregroundColor(.secondary)
-            }
+        case .initiating, .awaiting:
+            ProximitySearchView(coordinator: coordinator)
 
         case .verifying:
             VStack(spacing: 16) {
-                // Responder: show response QR for the initiator to scan
-                if let responseURI = coordinator.responsePayload {
-                    VStack(spacing: 8) {
-                        Text("Show this to the initiator")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        QRCodeView(content: responseURI)
-                            .frame(width: 150, height: 150)
+                // Proximity distance indicator
+                if let dist = coordinator.proximityDistance {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wave.3.right")
+                            .foregroundColor(.green)
+                        Text(String(format: "%.0f cm", dist * 100))
+                            .font(.system(.body, design: .monospaced))
                     }
-                    .padding(.bottom, 4)
+                }
+
+                if coordinator.proximityVerified {
+                    Label("Proximity Verified", systemImage: "checkmark.shield.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
                 }
 
                 Text("Verify Short Code")
@@ -223,6 +211,11 @@ struct HandshakeTab: View {
                 Text("Circle Created!")
                     .font(.title2)
                     .fontWeight(.bold)
+                if let peer = coordinator.discoveredPeerName {
+                    Text("Connected with \(peer)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Button("New Handshake") {
                     coordinator.resetHandshake()
                 }
@@ -252,122 +245,56 @@ struct HandshakeTab: View {
     }
 }
 
-// MARK: - Initiator Sheet (QR display)
+// MARK: - Proximity Search Animation
 
-struct InitiatorSheet: View {
+struct ProximitySearchView: View {
     @ObservedObject var coordinator: AppCoordinator
-    @State private var showResponseScanner = false
-    @State private var manualResponseURI = ""
+    @State private var pulseScale: CGFloat = 1.0
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                Text("Share this QR Code")
+        VStack(spacing: 20) {
+            ZStack {
+                // Pulsing rings
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .stroke(Color.green.opacity(0.3 - Double(i) * 0.1), lineWidth: 2)
+                        .scaleEffect(pulseScale + CGFloat(i) * 0.3)
+                        .frame(width: 80, height: 80)
+                }
+
+                // Center device icon
+                Image(systemName: "iphone.radiowaves.left.and.right")
+                    .font(.system(size: 32))
+                    .foregroundColor(.green)
+            }
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                    pulseScale = 1.3
+                }
+            }
+
+            Text(coordinator.proximityStatus)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            if let peer = coordinator.discoveredPeerName {
+                Label(peer, systemImage: "person.fill.checkmark")
+                    .foregroundColor(.green)
                     .font(.headline)
-
-                if let uri = coordinator.deadLinkURI {
-                    QRCodeView(content: uri)
-                        .frame(width: 200, height: 200)
-
-                    Text("Dead Link URI:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(uri)
-                        .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
-                        .lineLimit(3)
-                        .padding(8)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(8)
-                }
-
-                Divider()
-
-                Text("After peer scans, scan their response QR:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-
-                if showResponseScanner {
-                    QRScannerView { scannedURI in
-                        coordinator.receiveResponse(uri: scannedURI)
-                    }
-                    .frame(height: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                } else {
-                    Button {
-                        showResponseScanner = true
-                    } label: {
-                        Label("Scan Response QR", systemImage: "qrcode.viewfinder")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                Text("— or enter manually —")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                TextField("veu://response?pk=…", text: $manualResponseURI)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-
-                Button("Submit Response") {
-                    coordinator.receiveResponse(uri: manualResponseURI)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .disabled(manualResponseURI.isEmpty)
             }
-            .padding()
-        }
-    }
-}
 
-// MARK: - Scanner Sheet
-
-struct ScannerSheet: View {
-    @ObservedObject var coordinator: AppCoordinator
-    @Binding var isPresented: Bool
-    @State private var manualURI = ""
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                // Camera-based QR scanner
-                QRScannerView { scannedURI in
-                    coordinator.respondToHandshake(uri: scannedURI)
-                    isPresented = false
-                }
-                .frame(height: 300)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-
-                Text("— or enter manually —")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                TextField("veu://handshake?…", text: $manualURI)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-
-                Button("Connect") {
-                    coordinator.respondToHandshake(uri: manualURI)
-                    isPresented = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(manualURI.isEmpty)
+            if let dist = coordinator.proximityDistance {
+                Text(String(format: "%.0f cm", dist * 100))
+                    .font(.system(.title2, design: .monospaced))
+                    .foregroundColor(dist <= ProximitySession.proximityThreshold ? .green : .orange)
             }
-            .padding()
-            .navigationTitle("Scan Dead Link")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                }
+
+            Button("Cancel") {
+                coordinator.resetHandshake()
             }
+            .buttonStyle(.bordered)
+            .tint(.red)
         }
     }
 }

@@ -28,7 +28,7 @@ public final class HandshakeViewModel {
     public private(set) var circleKey: CircleKey?
 
     /// Circle ID for the new circle.
-    public private(set) var circleID: String
+    public var circleID: String
 
     /// Error message if handshake fails.
     public private(set) var errorMessage: String?
@@ -85,6 +85,23 @@ public final class HandshakeViewModel {
         auraColorHex = session.auraColorHex
         phase = session.phase
         return publicKeyData
+    }
+
+    /// Store the remote public key for later use (proximity handshake).
+    public func receiveRemotePublicKey(_ data: Data) {
+        _pendingRemotePublicKey = data
+    }
+    private var _pendingRemotePublicKey: Data?
+
+    /// Direct responder flow for proximity handshake — accepts raw public key + keypair
+    /// instead of parsing a Dead Link URI.
+    public func respondDirect(remotePublicKey: Data, localKeypair: EphemeralKeypair, circleID: String) throws {
+        self.circleID = circleID
+        session = HandshakeSession(circleID: circleID)
+        try session.respondDirect(remotePublicKeyData: remotePublicKey, localKeypair: localKeypair)
+        shortCode = session.shortCode
+        auraColorHex = session.auraColorHex
+        phase = session.phase
     }
 
     // MARK: - Verification
