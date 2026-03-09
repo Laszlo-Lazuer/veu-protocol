@@ -15,6 +15,7 @@ final class AppCoordinator: ObservableObject {
     @Published var shortCode: String?
     @Published var auraColorHex: String?
     @Published var timelineEntries: [TimelineEntry] = []
+    @Published var chatMessages: [ChatMessage] = []
     @Published var networkRunning = false
     @Published var syncedCount = 0
     @Published var networkError: String?
@@ -211,6 +212,7 @@ final class AppCoordinator: ObservableObject {
         do {
             try vm.reload()
             timelineEntries = vm.entries
+            reloadChat()
         } catch {
             print("Reload failed: \(error)")
         }
@@ -223,6 +225,7 @@ final class AppCoordinator: ObservableObject {
         do {
             let result = try vm.compose(data: data, burnAfter: burnAfter)
             timelineEntries = vm.entries
+            reloadChat()
             // Notify the ghost network so it can sync the new artifact to peers
             if let node = networkService?.ghostNode, let circleID = state.activeCircleID {
                 node.syncEngine.recordLocalArtifact(circleID: circleID)
@@ -231,6 +234,74 @@ final class AppCoordinator: ObservableObject {
         } catch {
             print("Seal failed: \(error)")
         }
+    }
+
+    // MARK: - Chat
+
+    func sendMessage(_ text: String) {
+        guard let state = appState else { return }
+        let vm = timelineVM ?? TimelineViewModel(appState: state)
+        timelineVM = vm
+        do {
+            // Encode message with sender metadata
+            let chatPayload = ChatPayload(
+                text: text,
+                sender: state.identity.callsign,
+                timestamp: Date().timeIntervalSince1970
+            )
+            let data = try JSONEncoder().encode(chatPayload)
+            let result = try vm.compose(data: data, artifactType: "message")
+            timelineEntries = vm.entries
+            reloadChat()
+            // Sync to peers
+            if let node = networkService?.ghostNode, let circleID = state.activeCircleID {
+                node.syncEngine.recordLocalArtifact(circleID: circleID)
+                node.resyncAllPeers()
+            }
+        } catch {
+            print("Send message failed: \(error)")
+        }
+    }
+
+    func reloadChat() {
+        guard let state = appState else { return }
+        let vm = timelineVM ?? TimelineViewModel(appState: state)
+        timelineVM = vm
+        do {
+            try vm.reload()
+            timelineEntries = vm.entries
+        } catch {
+            print("Reload failed: \(error)")
+            return
+        }
+
+        // Filter to message-type entries and decode
+        let myCallsign = state.identity.callsign
+        chatMessages = vm.entries
+            .filter { $0.artifactType == "message" }
+            .compactMap { entry -> ChatMessage? in
+                guard let data = entry.plaintextData,
+                      let payload = try? JSONDecoder().decode(ChatPayload.self, from: data) else {
+                    // Fallback: treat raw data as plain text
+                    guard let data = entry.plaintextData,
+                          let text = String(data: data, encoding: .utf8) else { return nil }
+                    return ChatMessage(
+                        id: entry.cid,
+                        text: text,
+                        sender: "Unknown",
+                        timestamp: Date(),
+                        isMe: false
+                    )
+                }
+                return ChatMessage(
+                    id: entry.cid,
+                    text: payload.text,
+                    sender: payload.sender,
+                    timestamp: Date(timeIntervalSince1970: payload.timestamp),
+                    isMe: payload.sender == myCallsign
+                )
+            }
+            .sorted { $0.timestamp < $1.timestamp }
     }
 
     // MARK: - Network
