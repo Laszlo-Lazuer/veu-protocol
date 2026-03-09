@@ -193,7 +193,7 @@ extension DeadLink: Equatable {
 
 extension Data {
     /// Encode to Base64URL (RFC 4648 §5) — no padding.
-    func base64URLEncoded() -> String {
+    public func base64URLEncoded() -> String {
         return self.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
@@ -201,7 +201,7 @@ extension Data {
     }
 
     /// Decode from Base64URL (RFC 4648 §5).
-    init?(base64URLEncoded string: String) {
+    public init?(base64URLEncoded string: String) {
         var base64 = string
             .replacingOccurrences(of: "-", with: "+")
             .replacingOccurrences(of: "_", with: "/")

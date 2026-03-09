@@ -32,7 +32,7 @@ public final class SyncEngine {
     public let deviceID: String
 
     /// Vector clocks per Circle: `circleID → VectorClock`.
-    public private(set) var clocks: [String: VectorClock]
+    public var clocks: [String: VectorClock]
 
     /// The Ledger for artifact CRUD.
     public let ledger: Ledger
@@ -119,18 +119,21 @@ public final class SyncEngine {
         let localClock = clock(for: circleID)
         let delta = localClock.delta(from: request.vectorClock)
 
-        // Collect artifacts to push (in POC, we push CID references;
-        // the actual ciphertext would be pushed via a separate data channel)
+        print("[SyncEngine] handleSyncRequest from \(request.deviceID), localClock=\(localClock), peerClock=\(request.vectorClock), delta=\(delta)")
+
+        // Collect artifacts to push
         var artifactsToPush: [GhostMessage.ArtifactPushPayload] = []
-        if let pendingCIDs = try? ledger.listArtifacts(circleID: circleID) {
-            for cid in pendingCIDs {
+        if let details = try? ledger.listArtifactDetails(circleID: circleID) {
+            print("[SyncEngine] Local artifacts for circle \(String(circleID.prefix(8)))…: \(details.count)")
+            for detail in details {
                 let payload = GhostMessage.ArtifactPushPayload(
-                    cid: cid,
+                    cid: detail.cid,
                     circleID: circleID,
-                    artifactType: "post",
-                    encryptedMeta: Data(),
+                    artifactType: detail.artifactType,
+                    encryptedMeta: detail.encryptedMeta,
                     sequence: localClock.sequence(for: deviceID),
-                    originDeviceID: deviceID
+                    originDeviceID: deviceID,
+                    burnAfter: detail.burnAfter
                 )
                 artifactsToPush.append(payload)
             }
@@ -141,6 +144,8 @@ public final class SyncEngine {
         let filtered = missingFromPeers.isEmpty ? artifactsToPush : artifactsToPush.filter { art in
             missingFromPeers.contains(art.originDeviceID)
         }
+
+        print("[SyncEngine] Pushing \(filtered.count) artifacts to \(request.deviceID)")
 
         let response = GhostMessage.syncResponse(
             GhostMessage.SyncResponsePayload(
@@ -234,7 +239,13 @@ public final class SyncEngine {
         }
     }
 
+    /// Store a received artifact (called from GhostNode for direct push handling).
+    public func storeReceivedArtifactPublic(_ artifact: GhostMessage.ArtifactPushPayload) {
+        storeReceivedArtifact(artifact)
+    }
+
     private func storeReceivedArtifact(_ artifact: GhostMessage.ArtifactPushPayload) {
+        print("[SyncEngine] Storing artifact \(String(artifact.cid.prefix(8)))… for circle \(String(artifact.circleID.prefix(8)))…")
         do {
             try ledger.insertArtifact(
                 cid: artifact.cid,
@@ -244,19 +255,38 @@ public final class SyncEngine {
                 burnAfter: artifact.burnAfter
             )
             try ledger.markSynced(cid: artifact.cid)
-
-            // Update the vector clock for the origin device
-            var vc = clock(for: artifact.circleID)
-            let currentSeq = vc.sequence(for: artifact.originDeviceID)
-            if artifact.sequence > currentSeq {
-                vc.set(artifact.originDeviceID, to: artifact.sequence)
-                clocks[artifact.circleID] = vc
-            }
-
+            print("[SyncEngine] ✅ Stored artifact \(String(artifact.cid.prefix(8)))…")
             delegate?.syncEngine(self, didReceiveArtifact: artifact.cid, circleID: artifact.circleID)
+        } catch let error as VeuAuthError {
+            // UNIQUE constraint = artifact already exists — skip silently
+            if case .ledgerError(let msg) = error, msg.contains("UNIQUE constraint") {
+                print("[SyncEngine] ⏭️ Artifact \(String(artifact.cid.prefix(8)))… already exists, skipping")
+            } else {
+                print("[SyncEngine] ❌ Store failed: \(error)")
+                delegate?.syncEngine(self, didFailWith: .syncFailed("Store failed: \(error.localizedDescription)"))
+                return
+            }
         } catch {
+            print("[SyncEngine] ❌ Store failed: \(error)")
             delegate?.syncEngine(self, didFailWith: .syncFailed("Store failed: \(error.localizedDescription)"))
+            return
         }
+
+        // Update the vector clock for the origin device
+        var vc = clock(for: artifact.circleID)
+        let currentSeq = vc.sequence(for: artifact.originDeviceID)
+        if artifact.sequence > currentSeq {
+            vc.set(artifact.originDeviceID, to: artifact.sequence)
+            clocks[artifact.circleID] = vc
+        }
+    }
+
+    /// Push artifacts to a peer (called from GhostNode for direct push).
+    public func pushArtifactsPublic(_ artifacts: [GhostMessage.ArtifactPushPayload],
+                                     connection: GhostConnection,
+                                     circleID: String,
+                                     peerDeviceID: String) {
+        pushArtifacts(artifacts, connection: connection, circleID: circleID, peerDeviceID: peerDeviceID)
     }
 
     private func pushArtifacts(_ artifacts: [GhostMessage.ArtifactPushPayload],

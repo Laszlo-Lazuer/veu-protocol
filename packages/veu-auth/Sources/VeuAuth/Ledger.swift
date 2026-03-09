@@ -204,6 +204,37 @@ public final class Ledger {
         }
     }
 
+    /// Fetch full artifact details for sync.
+    ///
+    /// - Parameter circleID: The Circle to query.
+    /// - Returns: Tuples of (cid, artifactType, encryptedMeta, burnAfter).
+    public func listArtifactDetails(circleID: String) throws -> [(cid: String, artifactType: String, encryptedMeta: Data, burnAfter: Int?)] {
+        let sql = """
+            SELECT cid, artifact_type, encrypted_meta, burn_after FROM artifacts
+            WHERE circle_id = ? AND sync_state != 'purged'
+            ORDER BY created_at DESC
+            """
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+
+        var results: [(cid: String, artifactType: String, encryptedMeta: Data, burnAfter: Int?)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let cid = String(cString: sqlite3_column_text(stmt, 0))
+            let artifactType = String(cString: sqlite3_column_text(stmt, 1))
+            let metaBytes = sqlite3_column_blob(stmt, 2)
+            let metaLen = sqlite3_column_bytes(stmt, 2)
+            let meta = metaBytes.map { Data(bytes: $0, count: Int(metaLen)) } ?? Data()
+            let burnAfter: Int? = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 3))
+            results.append((cid: cid, artifactType: artifactType, encryptedMeta: meta, burnAfter: burnAfter))
+        }
+        return results
+    }
+
     // MARK: - Metadata
 
     /// Get the current schema version.

@@ -156,6 +156,31 @@ public final class HandshakeSession {
         return keypair.publicKey.rawRepresentation
     }
 
+    /// **Responder Step 1 (Direct):** Accept a raw remote public key and local keypair directly,
+    /// bypassing Dead Link parsing. Used for proximity handshakes.
+    ///
+    /// Transitions: `IDLE` → `VERIFYING`
+    ///
+    /// - Parameters:
+    ///   - remotePublicKeyData: The initiator's raw X25519 public key (32 bytes).
+    ///   - localKeypair: The pre-generated ephemeral keypair for this responder.
+    /// - Throws: `VeuAuthError.keyAgreementFailed` or `.keyDerivationFailed`.
+    public func respondDirect(remotePublicKeyData: Data, localKeypair: EphemeralKeypair) throws {
+        guard phase == .idle else {
+            throw VeuAuthError.invalidStateTransition
+        }
+
+        guard let remotePK = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: remotePublicKeyData) else {
+            throw VeuAuthError.keyAgreementFailed
+        }
+
+        self.localKeypair = localKeypair
+        self.remotePublicKey = remotePK
+        self.phase = .awaiting
+
+        try deriveAndTransitionToVerifying()
+    }
+
     // MARK: - Verification
 
     /// **Both Peers:** Confirm that the displayed short code matches.

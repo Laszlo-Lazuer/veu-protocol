@@ -12,6 +12,8 @@ public struct TimelineEntry: Equatable {
     public let cid: String
     public let glazeSeedColor: (r: Float, g: Float, b: Float)
     public let burnAfter: Int?
+    /// In-memory plaintext for reveal (POC only — never persisted).
+    public let plaintextData: Data?
 
     public static func == (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
         lhs.cid == rhs.cid
@@ -39,6 +41,9 @@ public final class TimelineViewModel {
         self.appState = appState
     }
 
+    /// In-memory cache of plaintext data keyed by CID (POC only).
+    private var plaintextCache: [String: Data] = [:]
+
     // MARK: - Timeline
 
     /// Reload the artifact list from the Ledger for the active circle.
@@ -49,14 +54,31 @@ public final class TimelineViewModel {
             return
         }
 
-        let cids = try appState.ledger.listArtifacts(circleID: circleID)
-        entries = cids.map { cid in
+        let details = try appState.ledger.listArtifactDetails(circleID: circleID)
+        entries = details.map { detail in
             let seedData = GlazeSeed.glazeSeed(
-                from: Data(cid.utf8),
+                from: Data(detail.cid.utf8),
                 salt: circleKey.glazeSalt
             )
             let color = GlazeSeed.glazeColor(from: seedData)
-            return TimelineEntry(cid: cid, glazeSeedColor: color, burnAfter: nil)
+
+            // Use cached plaintext or decrypt from encryptedMeta
+            let plaintext: Data? = plaintextCache[detail.cid] ?? {
+                guard !detail.encryptedMeta.isEmpty else { return nil }
+                do {
+                    let artifact = try VeuArtifact(from: detail.encryptedMeta)
+                    return try Scramble.unscramble(artifact: artifact, using: circleKey.symmetricKey)
+                } catch {
+                    return nil
+                }
+            }()
+
+            return TimelineEntry(
+                cid: detail.cid,
+                glazeSeedColor: color,
+                burnAfter: detail.burnAfter,
+                plaintextData: plaintext
+            )
         }
     }
 
@@ -76,8 +98,8 @@ public final class TimelineViewModel {
         }
 
         let cid = UUID().uuidString
-        let artifactKey = try ArtifactKey.derived(from: circleKey, artifactID: UUID())
-        let artifact = try Scramble.scramble(data: data, using: artifactKey.symmetricKey)
+        // POC: encrypt directly with circle key so synced peers can decrypt
+        let artifact = try Scramble.scramble(data: data, using: circleKey.symmetricKey)
         let encryptedMeta = artifact.serialized()
 
         _ = try appState.ledger.insertArtifact(
@@ -87,6 +109,9 @@ public final class TimelineViewModel {
             encryptedMeta: encryptedMeta,
             burnAfter: burnAfter
         )
+
+        // Cache plaintext for in-app reveal (POC only)
+        plaintextCache[cid] = data
 
         try reload()
         return (cid: cid, artifact: artifact, encryptedMeta: encryptedMeta)

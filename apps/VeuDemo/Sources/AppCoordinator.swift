@@ -3,6 +3,7 @@ import VeuApp
 import VeuAuth
 import VeuGlaze
 import VeuGhost
+import MultipeerConnectivity
 
 /// Central coordinator managing app state and all service lifecycles.
 final class AppCoordinator: ObservableObject {
@@ -11,7 +12,6 @@ final class AppCoordinator: ObservableObject {
 
     @Published var appState: AppState?
     @Published var handshakePhase: HandshakePhase = .idle
-    @Published var deadLinkURI: String?
     @Published var shortCode: String?
     @Published var auraColorHex: String?
     @Published var timelineEntries: [TimelineEntry] = []
@@ -19,9 +19,15 @@ final class AppCoordinator: ObservableObject {
     @Published var syncedCount = 0
     @Published var networkError: String?
     @Published var handshakeProgress: Float = 0
-    @Published var responsePayload: String?
     @Published var peerCount = 0
     @Published var networkLog: [String] = []
+
+    // Proximity handshake state
+    @Published var proximityStatus: String = ""
+    @Published var proximityDistance: Float?
+    @Published var proximityDirection: SIMD3<Float>?
+    @Published var proximityVerified = false
+    @Published var discoveredPeerName: String?
 
     // MARK: - Internal
 
@@ -29,6 +35,7 @@ final class AppCoordinator: ObservableObject {
     private var timelineVM: TimelineViewModel?
     private var networkService: NetworkService?
     private var pulseLogger: PulseLogger?
+    private var proximitySession: ProximitySession?
 
     // MARK: - Bootstrap
 
@@ -43,59 +50,99 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Handshake
+    // MARK: - Proximity Handshake
 
     func initiateHandshake() {
         guard let state = appState else { return }
         let vm = HandshakeViewModel(appState: state)
         handshakeVM = vm
+
         do {
             try vm.initiate()
-            updateHandshakeState(from: vm)
-            // Append circleID to the Dead Link URI so the responder derives the same key
-            if let base = deadLinkURI {
-                deadLinkURI = base + "&cid=\(vm.circleID)"
-            }
+            handshakePhase = .initiating
+            handshakeProgress = 0.25
+            proximityStatus = "Searching for nearby device…"
+
+            // Get our public key from the Dead Link
+            guard let deadLinkURI = vm.deadLinkURI,
+                  let link = try? DeadLink.parse(uri: deadLinkURI) else { return }
+
+            let session = ProximitySession()
+            session.delegate = self
+            session.startAsInitiator(
+                deviceName: state.identity.callsign,
+                publicKey: link.publicKey.rawRepresentation,
+                circleID: vm.circleID
+            )
+            proximitySession = session
         } catch {
             print("Initiate failed: \(error)")
         }
     }
 
-    func respondToHandshake(uri: String) {
+    func joinHandshake() {
         guard let state = appState else { return }
-        // Extract the initiator's circleID from the URI so both sides use the same one
-        var circleID: String? = nil
-        if let components = URLComponents(string: uri),
-           let cid = components.queryItems?.first(where: { $0.name == "cid" })?.value {
-            circleID = cid
-        }
-        let vm = HandshakeViewModel(appState: state, circleID: circleID)
-        handshakeVM = vm
-        do {
-            let pubKeyData = try vm.respond(to: uri)
-            updateHandshakeState(from: vm)
-            // Encode responder's public key as a URI for the initiator to scan
-            responsePayload = "veu://response?pk=\(pubKeyData.base64URLEncoded())"
-        } catch {
-            print("Respond failed: \(error)")
-        }
+        handshakePhase = .awaiting
+        handshakeProgress = 0.5
+        proximityStatus = "Searching for nearby device…"
+
+        let session = ProximitySession()
+        session.delegate = self
+        // Responder doesn't have a public key yet — generate a temporary keypair
+        // The actual handshake will happen when we receive the initiator's payload
+        let tempKeypair = EphemeralKeypair.generate()
+        session.startAsResponder(
+            deviceName: state.identity.callsign,
+            publicKey: tempKeypair.publicKey.rawRepresentation
+        )
+        proximitySession = session
+
+        // Store the keypair so we can use it in the handshake
+        _responderKeypair = tempKeypair
     }
 
-    func receiveResponse(uri: String) {
-        guard let vm = handshakeVM else { return }
-        guard let components = URLComponents(string: uri),
-              components.scheme == "veu",
-              components.host == "response",
-              let pkStr = components.queryItems?.first(where: { $0.name == "pk" })?.value,
-              let pkData = Data(base64URLEncoded: pkStr) else {
-            print("Invalid response URI")
-            return
-        }
-        do {
-            try vm.receiveResponse(remotePublicKeyData: pkData)
-            updateHandshakeState(from: vm)
-        } catch {
-            print("Receive response failed: \(error)")
+    private var _responderKeypair: EphemeralKeypair?
+
+    /// Handle received handshake payload from the proximity peer.
+    func handleProximityHandshake(_ payload: ProximityHandshakePayload) {
+        guard let state = appState else { return }
+
+        if payload.role == "initiator" {
+            // We are the responder — construct a Dead Link URI from the payload and respond
+            let vm = HandshakeViewModel(appState: state, circleID: payload.circleID)
+            handshakeVM = vm
+
+            // Build a minimal Dead Link URI from the initiator's public key
+            // The responder needs to call respond(to:) which parses a URI
+            // Instead, we directly use the HandshakeSession for the key exchange
+            do {
+                let session = HandshakeSession(circleID: payload.circleID)
+                // Generate our keypair and perform ECDH with the initiator's public key
+                let keypair = _responderKeypair ?? EphemeralKeypair.generate()
+                _responderKeypair = nil
+
+                // Use the low-level handshake: set up session manually
+                vm.receiveRemotePublicKey(payload.publicKey)
+                try vm.respondDirect(
+                    remotePublicKey: payload.publicKey,
+                    localKeypair: keypair,
+                    circleID: payload.circleID
+                )
+                updateHandshakeState(from: vm)
+            } catch {
+                print("Respond to proximity handshake failed: \(error)")
+                proximityStatus = "Handshake failed: \(error.localizedDescription)"
+            }
+        } else {
+            // We are the initiator — we received the responder's public key
+            guard let vm = handshakeVM else { return }
+            do {
+                try vm.receiveResponse(remotePublicKeyData: payload.publicKey)
+                updateHandshakeState(from: vm)
+            } catch {
+                print("Receive proximity response failed: \(error)")
+                proximityStatus = "Handshake failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -105,6 +152,9 @@ final class AppCoordinator: ObservableObject {
             try vm.confirm()
             updateHandshakeState(from: vm)
             reloadTimeline()
+            // Clean up proximity session
+            proximitySession?.stop()
+            proximitySession = nil
         } catch {
             print("Confirm failed: \(error)")
         }
@@ -115,21 +165,28 @@ final class AppCoordinator: ObservableObject {
         if let vm = handshakeVM {
             updateHandshakeState(from: vm)
         }
+        proximitySession?.stop()
+        proximitySession = nil
     }
 
     func resetHandshake() {
         handshakeVM?.reset()
         handshakePhase = .idle
-        deadLinkURI = nil
         shortCode = nil
         auraColorHex = nil
         handshakeProgress = 0
-        responsePayload = nil
+        proximityStatus = ""
+        proximityDistance = nil
+        proximityDirection = nil
+        proximityVerified = false
+        discoveredPeerName = nil
+        _responderKeypair = nil
+        proximitySession?.stop()
+        proximitySession = nil
     }
 
     private func updateHandshakeState(from vm: HandshakeViewModel) {
         handshakePhase = vm.phase
-        deadLinkURI = vm.deadLinkURI
         shortCode = vm.shortCode
         auraColorHex = vm.auraColorHex
 
@@ -137,7 +194,9 @@ final class AppCoordinator: ObservableObject {
         case .idle: handshakeProgress = 0
         case .initiating: handshakeProgress = 0.25
         case .awaiting: handshakeProgress = 0.5
-        case .verifying: handshakeProgress = 0.75
+        case .verifying:
+            handshakeProgress = 0.75
+            proximityStatus = "Verify short code"
         case .confirmed: handshakeProgress = 1.0
         case .deadLink, .ghost: handshakeProgress = 0
         }
@@ -223,6 +282,41 @@ final class AppCoordinator: ObservableObject {
         networkService = nil
         pulseLogger = nil
         networkRunning = false
+    }
+}
+
+// MARK: - ProximitySessionDelegate
+
+extension AppCoordinator: ProximitySessionDelegate {
+
+    func proximitySession(_ session: ProximitySession, didDiscoverPeer peerID: MCPeerID) {
+        discoveredPeerName = peerID.displayName
+        proximityStatus = "Found \(peerID.displayName) nearby"
+    }
+
+    func proximitySession(_ session: ProximitySession, didReceiveHandshake payload: ProximityHandshakePayload) {
+        proximityStatus = "Key exchange in progress…"
+        handleProximityHandshake(payload)
+    }
+
+    func proximitySession(_ session: ProximitySession, didVerifyProximity distance: Float, direction: SIMD3<Float>?) {
+        proximityDistance = distance
+        proximityDirection = direction
+        proximityVerified = true
+        proximityStatus = String(format: "✅ Verified: %.0fcm away", distance * 100)
+    }
+
+    func proximitySession(_ session: ProximitySession, proximityCheckFailed distance: Float) {
+        proximityDistance = distance
+        proximityStatus = String(format: "⚠️ Move closer (%.1fm away, need <%.1fm)", distance, ProximitySession.proximityThreshold)
+    }
+
+    func proximitySession(_ session: ProximitySession, didFailWith error: Error) {
+        proximityStatus = "Error: \(error.localizedDescription)"
+    }
+
+    func proximitySessionDidDisconnect(_ session: ProximitySession) {
+        proximityStatus = "Peer disconnected"
     }
 }
 

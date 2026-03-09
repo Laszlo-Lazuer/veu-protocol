@@ -25,13 +25,17 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_veu-ghost._tcp</string>
+		<string>_veu-handshake._tcp</string>
+		<string>_veu-handshake._udp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Veu uses Face ID to authenticate before revealing protected content.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Veu discovers peers on your local network for encrypted artifact sync.</string>
+	<string>Veu discovers nearby devices for secure handshakes and encrypted artifact sync.</string>
+	<key>NSNearbyInteractionUsageDescription</key>
+	<string>Veu uses Ultra Wideband to verify the other device is physically nearby during the handshake.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>
