@@ -35,7 +35,7 @@ public final class GhostNode: @unchecked Sendable {
     public let syncEngine: SyncEngine
 
     /// Active peer connections keyed by endpoint description.
-    private var connections: [String: GhostConnection] = [:]
+    private var connections: [String: any TransportConnection] = [:]
 
     /// Pending artifact counts per connection key for direct push tracking.
     private var pendingArtifactCount: [String: Int] = [:]
@@ -171,15 +171,24 @@ extension GhostNode: LocalPulseDelegate {
 
     public func localPulse(_ pulse: LocalPulse, didAcceptConnection connection: NWConnection) {
         let ghostConn = GhostConnection(connection: connection, circleKey: circleKey)
-        let key = ghostConn.endpointDescription
-        connections[key] = ghostConn
+        acceptConnection(ghostConn)
+    }
+}
 
-        // Listen for sync requests in a loop so re-syncs work
-        listenForMessages(on: ghostConn, key: key)
+// MARK: - Transport-Agnostic Connection Handling
+
+extension GhostNode {
+    /// Accept any transport connection and begin listening for sync messages.
+    ///
+    /// This is the primary entry point for external transports (Bluetooth mesh,
+    /// WebSocket relay) to hand off an established connection to the sync layer.
+    public func acceptConnection(_ connection: any TransportConnection) {
+        let key = connection.endpointDescription
+        connections[key] = connection
+        listenForMessages(on: connection, key: key)
     }
 
-
-    private func listenForMessages(on conn: GhostConnection, key: String) {
+    private func listenForMessages(on conn: any TransportConnection, key: String) {
         conn.receive { [weak self] result in
             guard let self = self else { return }
             switch result {

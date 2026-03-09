@@ -83,7 +83,7 @@ public final class SyncEngine {
     /// - Parameters:
     ///   - circleID: The Circle to sync.
     ///   - connection: The encrypted peer connection.
-    public func initiateSync(circleID: String, connection: GhostConnection) {
+    public func initiateSync(circleID: String, connection: any TransportConnection) {
         let request = GhostMessage.syncRequest(
             GhostMessage.SyncRequestPayload(
                 deviceID: deviceID,
@@ -114,7 +114,7 @@ public final class SyncEngine {
     /// - Parameters:
     ///   - request: The received sync request payload.
     ///   - connection: The encrypted peer connection.
-    public func handleSyncRequest(_ request: GhostMessage.SyncRequestPayload, connection: GhostConnection) {
+    public func handleSyncRequest(_ request: GhostMessage.SyncRequestPayload, connection: any TransportConnection) {
         let circleID = request.circleID
         let localClock = clock(for: circleID)
         let delta = localClock.delta(from: request.vectorClock)
@@ -178,7 +178,7 @@ public final class SyncEngine {
     ///   - cid: The CID of the artifact to burn.
     ///   - circleID: The Circle the artifact belongs to.
     ///   - connection: The peer connection.
-    public func sendBurnNotice(cid: String, circleID: String, connection: GhostConnection) {
+    public func sendBurnNotice(cid: String, circleID: String, connection: any TransportConnection) {
         let notice = GhostMessage.burnNotice(
             GhostMessage.BurnNoticePayload(cid: cid, circleID: circleID, originDeviceID: deviceID)
         )
@@ -199,7 +199,7 @@ public final class SyncEngine {
 
     // MARK: - Private
 
-    private func receiveArtifacts(circleID: String, connection: GhostConnection, remaining: Int?) {
+    private func receiveArtifacts(circleID: String, connection: any TransportConnection, remaining: Int?) {
         connection.receive { [weak self] result in
             guard let self = self else { return }
             switch result {
@@ -283,14 +283,14 @@ public final class SyncEngine {
 
     /// Push artifacts to a peer (called from GhostNode for direct push).
     public func pushArtifactsPublic(_ artifacts: [GhostMessage.ArtifactPushPayload],
-                                     connection: GhostConnection,
+                                     connection: any TransportConnection,
                                      circleID: String,
                                      peerDeviceID: String) {
         pushArtifacts(artifacts, connection: connection, circleID: circleID, peerDeviceID: peerDeviceID)
     }
 
     private func pushArtifacts(_ artifacts: [GhostMessage.ArtifactPushPayload],
-                               connection: GhostConnection,
+                               connection: any TransportConnection,
                                circleID: String,
                                peerDeviceID: String) {
         guard let first = artifacts.first else {

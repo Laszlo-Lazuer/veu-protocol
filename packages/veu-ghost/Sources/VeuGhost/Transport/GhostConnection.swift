@@ -17,7 +17,7 @@ import Crypto
 ///
 /// Messages are framed as `[uint32 length][AES-256-GCM envelope]` over a
 /// raw TCP `NWConnection`.  The Circle Key is used for all encryption.
-public final class GhostConnection: @unchecked Sendable {
+public final class GhostConnection: TransportConnection, @unchecked Sendable {
 
     /// The underlying Network framework connection.
     public let connection: NWConnection
