@@ -1,0 +1,18 @@
+services:
+  veu-relay:
+    build: .
+    ports:
+      - "${VEU_RELAY_PORT:-8080}:8080"
+    volumes:
+      - relay-data:/data
+    environment:
+      VEU_RELAY_PORT: "8080"
+      VEU_RELAY_DB_PATH: "/data/veu-relay.db"
+      VEU_APNS_KEY_PATH: "${VEU_APNS_KEY_PATH:-}"
+      VEU_APNS_KEY_ID: "${VEU_APNS_KEY_ID:-}"
+      VEU_APNS_TEAM_ID: "${VEU_APNS_TEAM_ID:-}"
+      VEU_APNS_TOPIC: "${VEU_APNS_TOPIC:-}"
+    restart: unless-stopped
+
+volumes:
+  relay-data:

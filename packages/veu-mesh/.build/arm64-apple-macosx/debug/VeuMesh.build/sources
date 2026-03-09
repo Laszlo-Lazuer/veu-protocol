@@ -1,0 +1,9 @@
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/MeshNode.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Protocols/MeshTransportProtocol.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/GlobalTransport.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/LocalTransport.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/MeshPeerConnection.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/MeshRouter.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/MeshTransport.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/Transports/RelayTransportConnection.swift
+/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/Sources/VeuMesh/VeuMeshError.swift

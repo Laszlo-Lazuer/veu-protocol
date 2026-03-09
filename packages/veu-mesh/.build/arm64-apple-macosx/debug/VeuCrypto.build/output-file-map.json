@@ -1,0 +1,61 @@
+{
+  "": {
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/master.swiftdeps"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/ArtifactKey.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/ArtifactKey.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/ArtifactKey.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/ArtifactKey~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/ArtifactKey.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/ArtifactKey.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/BurnEngine.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/BurnEngine.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/BurnEngine.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/BurnEngine~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/BurnEngine.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/BurnEngine.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/CIDv1.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CIDv1.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CIDv1.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CIDv1~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CIDv1.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CIDv1.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/CircleKey.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CircleKey.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CircleKey.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CircleKey~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CircleKey.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/CircleKey.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/GlazeSeed.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/GlazeSeed.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/GlazeSeed.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/GlazeSeed~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/GlazeSeed.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/GlazeSeed.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/Scramble.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/Scramble.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/Scramble.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/Scramble~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/Scramble.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/Scramble.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/VeuArtifact.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuArtifact.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuArtifact.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuArtifact~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuArtifact.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuArtifact.dia"
+  },
+  "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-crypto/Sources/VeuCrypto/VeuCryptoError.swift": {
+    "dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuCryptoError.d",
+    "object": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuCryptoError.swift.o",
+    "swiftmodule": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuCryptoError~partial.swiftmodule",
+    "swift-dependencies": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuCryptoError.swiftdeps",
+    "diagnostics": "/Users/squirrel/Documents/repos/_/veu-protocol/packages/veu-mesh/.build/arm64-apple-macosx/debug/VeuCrypto.build/VeuCryptoError.dia"
+  }
+}
