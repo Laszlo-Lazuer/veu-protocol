@@ -82,9 +82,15 @@ public final class LocalPulse {
         guard !isActive else { return }
 
         // --- Listener (advertise) ---
+        // includePeerToPeer = true enables AWDL (Wi-Fi Direct) so phones can
+        // sync without a shared router. The OS prefers same-network Wi-Fi
+        // automatically; AWDL is used as a fallback.
+        let params = NWParameters.tcp
+        params.includePeerToPeer = true
+
         let listener: NWListener
         do {
-            listener = try NWListener(using: .tcp, on: port)
+            listener = try NWListener(using: params, on: port)
         } catch {
             throw VeuGhostError.discoveryFailed("Failed to create listener: \(error.localizedDescription)")
         }
@@ -119,8 +125,11 @@ public final class LocalPulse {
         self.listener = listener
 
         // --- Browser (discover) ---
+        // Same includePeerToPeer flag so we discover peers on both LAN and AWDL.
         let descriptor = NWBrowser.Descriptor.bonjour(type: Self.serviceType, domain: nil)
-        let browser = NWBrowser(for: descriptor, using: .tcp)
+        let browserParams = NWParameters.tcp
+        browserParams.includePeerToPeer = true
+        let browser = NWBrowser(for: descriptor, using: browserParams)
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self = self else { return }
