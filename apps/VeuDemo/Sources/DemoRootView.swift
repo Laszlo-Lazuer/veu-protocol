@@ -124,6 +124,11 @@ struct HandshakeTab: View {
             }
             .padding()
             .navigationTitle("Emerald Handshake")
+            .onChange(of: coordinator.handshakePhase) { _ in
+                if coordinator.handshakePhase != .initiating {
+                    showInitiator = false
+                }
+            }
         }
     }
 
@@ -169,6 +174,18 @@ struct HandshakeTab: View {
 
         case .verifying:
             VStack(spacing: 16) {
+                // Responder: show response QR for the initiator to scan
+                if let responseURI = coordinator.responsePayload {
+                    VStack(spacing: 8) {
+                        Text("Show this to the initiator")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        QRCodeView(content: responseURI)
+                            .frame(width: 150, height: 150)
+                    }
+                    .padding(.bottom, 4)
+                }
+
                 Text("Verify Short Code")
                     .font(.headline)
                 if let code = coordinator.shortCode {
@@ -239,32 +256,73 @@ struct HandshakeTab: View {
 
 struct InitiatorSheet: View {
     @ObservedObject var coordinator: AppCoordinator
+    @State private var showResponseScanner = false
+    @State private var manualResponseURI = ""
 
     var body: some View {
-        VStack(spacing: 20) {
-            Text("Share this QR Code")
-                .font(.headline)
+        ScrollView {
+            VStack(spacing: 20) {
+                Text("Share this QR Code")
+                    .font(.headline)
 
-            if let uri = coordinator.deadLinkURI {
-                QRCodeView(content: uri)
-                    .frame(width: 200, height: 200)
+                if let uri = coordinator.deadLinkURI {
+                    QRCodeView(content: uri)
+                        .frame(width: 200, height: 200)
 
-                Text("Dead Link URI:")
+                    Text("Dead Link URI:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(uri)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .lineLimit(3)
+                        .padding(8)
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(8)
+                }
+
+                Divider()
+
+                Text("After peer scans, scan their response QR:")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if showResponseScanner {
+                    QRScannerView { scannedURI in
+                        coordinator.receiveResponse(uri: scannedURI)
+                    }
+                    .frame(height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                } else {
+                    Button {
+                        showResponseScanner = true
+                    } label: {
+                        Label("Scan Response QR", systemImage: "qrcode.viewfinder")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Text("— or enter manually —")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(uri)
-                    .font(.system(.caption2, design: .monospaced))
-                    .textSelection(.enabled)
-                    .lineLimit(3)
-                    .padding(8)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(8)
-            }
 
-            Text("Waiting for peer to scan…")
-                .foregroundColor(.secondary)
+                TextField("veu://response?pk=…", text: $manualResponseURI)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+
+                Button("Submit Response") {
+                    coordinator.receiveResponse(uri: manualResponseURI)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .disabled(manualResponseURI.isEmpty)
+            }
+            .padding()
         }
-        .padding()
     }
 }
 
@@ -352,14 +410,24 @@ struct DemoTimelineTab: View {
                             GridItem(.adaptive(minimum: 120, maximum: 180))
                         ], spacing: 12) {
                             ForEach(coordinator.timelineEntries, id: \.cid) { entry in
-                                AuraView(
-                                    seedColor: SIMD3<Float>(
-                                        entry.glazeSeedColor.r,
-                                        entry.glazeSeedColor.g,
-                                        entry.glazeSeedColor.b
-                                    ),
-                                    pulse: 0.0
-                                )
+                                ZStack {
+                                    // Revealed content shown after biometric auth
+                                    if let data = entry.plaintextData,
+                                       let uiImage = UIImage(data: data) {
+                                        Image(uiImage: uiImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                    } else if let data = entry.plaintextData,
+                                              let text = String(data: data, encoding: .utf8) {
+                                        Text(text)
+                                            .font(.caption)
+                                            .padding(8)
+                                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                            .background(Color(.systemBackground))
+                                    } else {
+                                        Color.gray.opacity(0.2)
+                                    }
+                                }
                                 .frame(height: 120)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .vueToggle(
@@ -521,6 +589,7 @@ struct NetworkTab: View {
                     VStack(alignment: .leading, spacing: 8) {
                         InfoRow(label: "Device ID", value: coordinator.appState?.identity.deviceID ?? "—")
                         InfoRow(label: "Active Circle", value: coordinator.appState?.activeCircleID.map { String($0.prefix(8)) + "…" } ?? "None")
+                        InfoRow(label: "Peers", value: "\(coordinator.peerCount)")
                         InfoRow(label: "Synced Artifacts", value: "\(coordinator.syncedCount)")
                     }
                     .padding()
@@ -554,6 +623,28 @@ struct NetworkTab: View {
                         .padding(8)
                         .background(Color.red.opacity(0.1))
                         .cornerRadius(8)
+                }
+
+                // Debug log
+                if !coordinator.networkLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Network Log")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(coordinator.networkLog.enumerated()), id: \.offset) { _, entry in
+                                    Text(entry)
+                                        .font(.system(.caption2, design: .monospaced))
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 150)
+                    }
+                    .padding(8)
+                    .background(Color.gray.opacity(0.05))
+                    .cornerRadius(8)
                 }
 
                 Spacer()
