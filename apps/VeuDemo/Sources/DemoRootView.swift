@@ -42,6 +42,14 @@ struct DemoRootView: View {
                 .tag(4)
         }
         .tint(.green)
+        .alert("Error", isPresented: .init(
+            get: { coordinator.sealError != nil },
+            set: { if !$0 { coordinator.sealError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(coordinator.sealError ?? "")
+        }
     }
 }
 
@@ -451,67 +459,22 @@ struct DemoTimelineTab: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if appState.activeCircleID == nil {
-                    VStack(spacing: 12) {
-                        Image(systemName: "circle.dashed")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
-                        Text("No Active Circle")
-                            .font(.headline)
-                        Text("Complete a handshake first.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                } else if coordinator.timelineEntries.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
-                        Text("No Artifacts")
-                            .font(.headline)
-                        Text("Capture a photo or type a message to seal.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: [
-                            GridItem(.adaptive(minimum: 120, maximum: 180))
-                        ], spacing: 12) {
-                            ForEach(coordinator.timelineEntries, id: \.cid) { entry in
-                                ZStack {
-                                    // Revealed content shown after biometric auth
-                                    if let data = entry.plaintextData,
-                                       let uiImage = UIImage(data: data) {
-                                        Image(uiImage: uiImage)
-                                            .resizable()
-                                            .scaledToFill()
-                                    } else if let data = entry.plaintextData,
-                                              let text = String(data: data, encoding: .utf8) {
-                                        Text(text)
-                                            .font(.caption)
-                                            .padding(8)
-                                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                            .background(Color(.systemBackground))
-                                    } else {
-                                        Color.gray.opacity(0.2)
-                                    }
-                                }
-                                .frame(height: 120)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .vueToggle(
-                                    seedColor: SIMD3<Float>(
-                                        entry.glazeSeedColor.r,
-                                        entry.glazeSeedColor.g,
-                                        entry.glazeSeedColor.b
-                                    ),
-                                    onReveal: { HapticEngine.vueHum() },
-                                    onGlaze: { HapticEngine.burnClick() }
-                                )
-                            }
-                        }
-                        .padding()
+            GeometryReader { geo in
+                Group {
+                    if appState.activeCircleID == nil {
+                        emptyStateView(
+                            icon: "circle.dashed",
+                            title: "No Active Circle",
+                            subtitle: "Complete a handshake first."
+                        )
+                    } else if coordinator.timelineEntries.isEmpty {
+                        emptyStateView(
+                            icon: "photo.on.rectangle.angled",
+                            title: "No Artifacts",
+                            subtitle: "Capture a photo or type a message to seal."
+                        )
+                    } else {
+                        timelineFeed(viewportHeight: geo.size.height)
                     }
                 }
             }
@@ -532,6 +495,175 @@ struct DemoTimelineTab: View {
             }
         }
     }
+    
+    @ViewBuilder
+    private func emptyStateView(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 48))
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.headline)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    @ViewBuilder
+    private func timelineFeed(viewportHeight: CGFloat) -> some View {
+        let cardHeight = viewportHeight * 0.65
+        let peekAmount: CGFloat = 40
+        
+        ScrollView(.vertical, showsIndicators: false) {
+            LazyVStack(spacing: 16) {
+                ForEach(coordinator.timelineEntries, id: \.cid) { entry in
+                    timelineCard(entry: entry, height: cardHeight)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, peekAmount / 2)
+        }
+    }
+    
+    @ViewBuilder
+    private func timelineCard(entry: TimelineEntry, height: CGFloat) -> some View {
+        let seedColor = SIMD3<Float>(
+            entry.glazeSeedColor.r,
+            entry.glazeSeedColor.g,
+            entry.glazeSeedColor.b
+        )
+        
+        // Check if this is a targeted post the user can't reveal (FOMO skeleton)
+        if entry.isTargeted && !entry.canReveal {
+            fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
+        } else {
+            revealableCard(entry: entry, height: height, seedColor: seedColor)
+        }
+    }
+    
+    @ViewBuilder
+    private func revealableCard(entry: TimelineEntry, height: CGFloat, seedColor: SIMD3<Float>) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            // Content layer
+            Group {
+                if let data = entry.plaintextData,
+                   let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if let data = entry.plaintextData,
+                          let text = String(data: data, encoding: .utf8) {
+                    VStack {
+                        Spacer()
+                        Text(text)
+                            .font(.title2)
+                            .padding(20)
+                            .frame(maxWidth: .infinity)
+                        Spacer()
+                    }
+                    .background(Color(.systemBackground))
+                } else {
+                    Color.gray.opacity(0.2)
+                }
+            }
+            .frame(height: height)
+            
+            // Sender info overlay (shown when revealed)
+            if let callsign = entry.senderCallsign {
+                HStack(spacing: 8) {
+                    // Mini-Aura avatar
+                    AuraView(seedColor: seedColor, pulse: 0.0)
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
+                    
+                    Text(callsign)
+                        .font(.caption.bold())
+                        .foregroundColor(.white)
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
+                .padding(12)
+            }
+        }
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .vueToggle(
+            seedColor: seedColor,
+            sessionUnlocked: coordinator.sessionUnlocked,
+            isVaultMode: false,
+            canReveal: entry.canReveal,
+            onReveal: { HapticEngine.vueHum() },
+            onGlaze: { HapticEngine.burnClick() }
+        )
+    }
+    
+    @ViewBuilder
+    private func fomoSkeletonCard(entry: TimelineEntry, height: CGFloat, seedColor: SIMD3<Float>) -> some View {
+        // FOMO skeleton: animated Aura with fake identity for non-recipients
+        let fomoSeed = fomoSeedColor(for: entry.cid)
+        let fakeCallsign = fomoCallsign(for: entry.cid)
+        
+        ZStack(alignment: .bottomLeading) {
+            // Full animated Aura background
+            AuraView(seedColor: fomoSeed, pulse: 0.3)
+            
+            // Fake sender info
+            HStack(spacing: 8) {
+                // Mini-Aura avatar with different seed
+                AuraView(seedColor: fomoSeed, pulse: 0.2)
+                    .frame(width: 32, height: 32)
+                    .clipShape(Circle())
+                
+                Text(fakeCallsign)
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                // Lock indicator
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(12)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .padding(12)
+        }
+        .frame(height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+    
+    /// Derive a deterministic but obfuscated seed color for FOMO skeleton
+    private func fomoSeedColor(for cid: String) -> SIMD3<Float> {
+        let hash = cid.data(using: .utf8)!.withUnsafeBytes { bytes in
+            var h: UInt64 = 5381
+            for byte in bytes {
+                h = ((h << 5) &+ h) &+ UInt64(byte)
+            }
+            return h
+        }
+        return SIMD3<Float>(
+            Float((hash >> 16) & 0xFF) / 255.0,
+            Float((hash >> 8) & 0xFF) / 255.0,
+            Float(hash & 0xFF) / 255.0
+        )
+    }
+    
+    /// Derive a deterministic fake callsign for FOMO skeleton
+    private func fomoCallsign(for cid: String) -> String {
+        let hash = cid.data(using: .utf8)!.withUnsafeBytes { bytes in
+            var h: UInt64 = 5381
+            for byte in bytes {
+                h = ((h << 5) &+ h) &+ UInt64(byte)
+            }
+            return h
+        }
+        return String(format: "%08X", UInt32(truncatingIfNeeded: hash >> 32))
+    }
 }
 
 // MARK: - Capture Sheet
@@ -544,6 +676,8 @@ struct CaptureSheet: View {
     @State private var useCamera = false
     @State private var sealed = false
     @State private var burnHours: Double = 24
+    @State private var selectedRecipients: Set<String> = []  // Device IDs
+    @State private var showRecipientPicker = false
 
     var body: some View {
         NavigationStack {
@@ -594,6 +728,9 @@ struct CaptureSheet: View {
                     TextField("Enter message…", text: $messageText, axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(3...6)
+                    
+                    // Recipient picker
+                    recipientSelector
 
                     VStack(alignment: .leading) {
                         Text("Burn Timer: \(Int(burnHours))h")
@@ -609,12 +746,7 @@ struct CaptureSheet: View {
                             .font(.headline)
                     } else {
                         Button {
-                            let data = capturedData ?? Data(messageText.utf8)
-                            guard !data.isEmpty else { return }
-                            let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
-                            coordinator.sealArtifact(data: data, burnAfter: burnEpoch)
-                            HapticEngine.handshakeHeartbeat()
-                            sealed = true
+                            sealContent()
                         } label: {
                             Label("Seal", systemImage: "lock.shield")
                                 .frame(maxWidth: .infinity)
@@ -634,7 +766,131 @@ struct CaptureSheet: View {
                     Button("Done") { isPresented = false }
                 }
             }
+            .sheet(isPresented: $showRecipientPicker) {
+                recipientPickerSheet
+            }
         }
+    }
+    
+    @ViewBuilder
+    private var recipientSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Recipients")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    showRecipientPicker = true
+                } label: {
+                    Label(recipientLabel, systemImage: selectedRecipients.isEmpty ? "person.2" : "person.2.fill")
+                        .font(.subheadline)
+                }
+            }
+            
+            if !selectedRecipients.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(selectedRecipients), id: \.self) { deviceID in
+                            if let member = coordinator.circleMembers.first(where: { $0.id == deviceID }) {
+                                HStack(spacing: 4) {
+                                    Text(member.callsign)
+                                        .font(.caption.bold())
+                                    Button {
+                                        selectedRecipients.remove(deviceID)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.caption)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.green.opacity(0.2))
+                                .clipShape(Capsule())
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(12)
+    }
+    
+    private var recipientLabel: String {
+        if selectedRecipients.isEmpty {
+            return "Everyone"
+        } else {
+            return "\(selectedRecipients.count) selected"
+        }
+    }
+    
+    @ViewBuilder
+    private var recipientPickerSheet: some View {
+        NavigationStack {
+            List {
+                // "Everyone" option
+                Button {
+                    selectedRecipients.removeAll()
+                    showRecipientPicker = false
+                } label: {
+                    HStack {
+                        Image(systemName: "person.2.fill")
+                        Text("Everyone in Circle")
+                        Spacer()
+                        if selectedRecipients.isEmpty {
+                            Image(systemName: "checkmark")
+                                .foregroundColor(.green)
+                        }
+                    }
+                }
+                
+                Section("Circle Members") {
+                    ForEach(coordinator.circleMembers) { member in
+                        // Skip self (can't send to just yourself)
+                        if member.id != coordinator.appState?.identity.deviceID {
+                            Button {
+                                if selectedRecipients.contains(member.id) {
+                                    selectedRecipients.remove(member.id)
+                                } else {
+                                    selectedRecipients.insert(member.id)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(member.callsign)
+                                        .font(.body.monospaced())
+                                    Spacer()
+                                    if selectedRecipients.contains(member.id) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundColor(.green)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Select Recipients")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showRecipientPicker = false }
+                }
+            }
+        }
+    }
+    
+    private func sealContent() {
+        let data = capturedData ?? Data(messageText.utf8)
+        guard !data.isEmpty else { return }
+        let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
+        
+        // Convert selected recipients to array (nil = everyone)
+        let targets: [String]? = selectedRecipients.isEmpty ? nil : Array(selectedRecipients)
+        
+        coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+        HapticEngine.handshakeHeartbeat()
+        sealed = true
     }
 }
 

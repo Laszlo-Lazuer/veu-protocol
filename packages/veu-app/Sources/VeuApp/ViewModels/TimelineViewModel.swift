@@ -15,6 +15,16 @@ public struct TimelineEntry: Equatable {
     public let burnAfter: Int?
     /// In-memory plaintext for reveal (POC only — never persisted).
     public let plaintextData: Data?
+    /// Device ID of the sender.
+    public let senderID: String?
+    /// Sender's callsign for display.
+    public let senderCallsign: String?
+    /// Target recipients (nil = everyone in circle, [] = public).
+    public let targetRecipients: [String]?
+    /// Whether this is a targeted post (not for everyone).
+    public var isTargeted: Bool { targetRecipients != nil && targetRecipients?.isEmpty == false }
+    /// Whether the current user can view this content.
+    public let canReveal: Bool
 
     public static func == (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
         lhs.cid == rhs.cid
@@ -54,6 +64,8 @@ public final class TimelineViewModel {
             entries = []
             return
         }
+        
+        let myDeviceID = appState.identity.deviceID
 
         let details = try appState.ledger.listArtifactDetails(circleID: circleID)
         entries = details.map { detail in
@@ -62,9 +74,32 @@ public final class TimelineViewModel {
                 salt: circleKey.glazeSalt
             )
             let color = GlazeSeed.glazeColor(from: seedData)
+            
+            // Determine if user can reveal this content
+            let canReveal: Bool
+            if let targets = detail.targetRecipients, !targets.isEmpty {
+                // Targeted post: can reveal if sender or recipient
+                canReveal = detail.senderID == myDeviceID || targets.contains(myDeviceID)
+            } else {
+                // Public post: everyone can reveal
+                canReveal = true
+            }
+            
+            // Look up sender callsign from circle members (or use fallback)
+            let senderCallsign: String? = detail.senderID.flatMap { senderID in
+                if senderID == myDeviceID {
+                    return appState.identity.callsign
+                }
+                // Try to look up from circle members
+                if let members = try? appState.ledger.listCircleMembers(circleID: circleID),
+                   let member = members.first(where: { $0.deviceID == senderID }) {
+                    return member.callsign
+                }
+                return nil
+            }
 
-            // Use cached plaintext or decrypt from encryptedMeta
-            let plaintext: Data? = plaintextCache[detail.cid] ?? {
+            // Use cached plaintext or decrypt from encryptedMeta (only if canReveal)
+            let plaintext: Data? = canReveal ? (plaintextCache[detail.cid] ?? {
                 guard !detail.encryptedMeta.isEmpty else { return nil }
                 do {
                     let artifact = try VeuArtifact(from: detail.encryptedMeta)
@@ -72,14 +107,18 @@ public final class TimelineViewModel {
                 } catch {
                     return nil
                 }
-            }()
+            }()) : nil
 
             return TimelineEntry(
                 cid: detail.cid,
                 artifactType: detail.artifactType,
                 glazeSeedColor: color,
                 burnAfter: detail.burnAfter,
-                plaintextData: plaintext
+                plaintextData: plaintext,
+                senderID: detail.senderID,
+                senderCallsign: senderCallsign,
+                targetRecipients: detail.targetRecipients,
+                canReveal: canReveal
             )
         }
     }
@@ -92,23 +131,35 @@ public final class TimelineViewModel {
     public func compose(
         data: Data,
         artifactType: String = "post",
+        targetRecipients: [String]? = nil,
         burnAfter: Int? = nil
     ) throws -> (cid: String, artifact: VeuArtifact, encryptedMeta: Data) {
         let circleKey = try appState.activeCircleKey()
         guard let circleID = appState.activeCircleID else {
             throw VeuAppError.noActiveCircle
         }
+        
+        let senderID = appState.identity.deviceID
 
         let cid = UUID().uuidString
         // POC: encrypt directly with circle key so synced peers can decrypt
         let artifact = try Scramble.scramble(data: data, using: circleKey.symmetricKey)
         let encryptedMeta = artifact.serialized()
+        
+        // Encode target recipients as JSON if present
+        let targetRecipientsJSON: String? = targetRecipients.flatMap { recipients in
+            guard !recipients.isEmpty else { return nil }
+            return try? String(data: JSONEncoder().encode(recipients), encoding: .utf8)
+        }
 
         _ = try appState.ledger.insertArtifact(
             cid: cid,
             circleID: circleID,
             artifactType: artifactType,
             encryptedMeta: encryptedMeta,
+            senderID: senderID,
+            targetRecipients: targetRecipientsJSON,
+            wrappedKeys: nil,  // TODO: add ephemeral key wrapping for targeted posts
             burnAfter: burnAfter
         )
 

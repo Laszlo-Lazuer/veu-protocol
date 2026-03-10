@@ -1,5 +1,6 @@
 import SwiftUI
 import BackgroundTasks
+import LocalAuthentication
 import VeuApp
 import VeuAuth
 import VeuGlaze
@@ -26,6 +27,22 @@ final class AppCoordinator: ObservableObject {
     @Published var networkLog: [String] = []
     @Published var activeTransport: String = "Offline"
     @Published var relayURL: String = ""
+    @Published var sealError: String?
+    
+    /// Session-based unlock: FaceID once on app launch unlocks all content for the session.
+    @Published var sessionUnlocked = false
+    /// When session unlock was last performed (nil = never this session).
+    @Published var lastUnlockTime: Date?
+    
+    /// Circle member for display in recipient picker.
+    public struct CircleMember: Identifiable, Equatable {
+        public let id: String  // deviceID
+        public let callsign: String
+        public let publicKeyHex: String
+    }
+    
+    /// Members of the active circle (for recipient picker).
+    @Published var circleMembers: [CircleMember] = []
 
     // Proximity handshake state
     @Published var proximityStatus: String = ""
@@ -52,6 +69,42 @@ final class AppCoordinator: ObservableObject {
         } catch {
             print("Bootstrap failed: \(error)")
         }
+    }
+    
+    // MARK: - Session Unlock
+    
+    /// Perform session-level FaceID unlock. Once unlocked, content auto-reveals for the session.
+    func performSessionUnlock(completion: @escaping (Bool) -> Void) {
+        let context = LAContext()
+        var error: NSError?
+        
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            // Fallback: no biometrics available, unlock anyway
+            DispatchQueue.main.async {
+                self.sessionUnlocked = true
+                self.lastUnlockTime = Date()
+                completion(true)
+            }
+            return
+        }
+        
+        context.evaluatePolicy(
+            .deviceOwnerAuthenticationWithBiometrics,
+            localizedReason: "Unlock Veu to view your content"
+        ) { success, _ in
+            DispatchQueue.main.async {
+                if success {
+                    self.sessionUnlocked = true
+                    self.lastUnlockTime = Date()
+                }
+                completion(success)
+            }
+        }
+    }
+    
+    /// Lock the session (e.g., when app enters background for extended time).
+    func lockSession() {
+        sessionUnlocked = false
     }
 
     // MARK: - Proximity Handshake
@@ -152,9 +205,34 @@ final class AppCoordinator: ObservableObject {
 
     func confirmHandshake() {
         guard let vm = handshakeVM else { return }
+        guard let state = appState else { return }
         do {
             try vm.confirm()
             updateHandshakeState(from: vm)
+            
+            // Add circle members (self + peer)
+            let circleID = vm.circleID
+            
+            // Add self as member
+            try state.ledger.insertCircleMember(
+                circleID: circleID,
+                deviceID: state.identity.deviceID,
+                publicKeyHex: state.identity.publicKeyHex,
+                callsign: state.identity.callsign
+            )
+            
+            // Add peer as member (derive callsign from their public key)
+            if let peerPubKeyData = vm.peerPublicKeyData {
+                let peerCallsign = Identity.deriveCallsign(from: peerPubKeyData)
+                let peerDeviceID = Identity.deriveDeviceID(from: peerPubKeyData)
+                try state.ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: peerDeviceID,
+                    publicKeyHex: peerPubKeyData.map { String(format: "%02x", $0) }.joined(),
+                    callsign: peerCallsign
+                )
+            }
+            
             reloadTimeline()
             // Clean up proximity session
             proximitySession?.stop()
@@ -216,17 +294,48 @@ final class AppCoordinator: ObservableObject {
             try vm.reload()
             timelineEntries = vm.entries
             reloadChat()
+            reloadCircleMembers()
         } catch {
             print("Reload failed: \(error)")
         }
     }
+    
+    /// Reload circle members for the active circle (for recipient picker).
+    func reloadCircleMembers() {
+        guard let state = appState,
+              let circleID = state.activeCircleID else {
+            circleMembers = []
+            return
+        }
+        
+        do {
+            let members = try state.ledger.listCircleMembers(circleID: circleID)
+            circleMembers = members.map { member in
+                CircleMember(
+                    id: member.deviceID,
+                    callsign: member.callsign,
+                    publicKeyHex: member.publicKeyHex
+                )
+            }
+        } catch {
+            print("Reload members failed: \(error)")
+            circleMembers = []
+        }
+    }
 
-    func sealArtifact(data: Data, burnAfter: Int?) {
-        guard let state = appState else { return }
+    func sealArtifact(data: Data, burnAfter: Int?, targetRecipients: [String]? = nil) {
+        guard let state = appState else {
+            sealError = "App state not initialized"
+            return
+        }
+        guard state.activeCircleID != nil else {
+            sealError = "No active circle selected"
+            return
+        }
         let vm = timelineVM ?? TimelineViewModel(appState: state)
         timelineVM = vm
         do {
-            let result = try vm.compose(data: data, burnAfter: burnAfter)
+            let result = try vm.compose(data: data, targetRecipients: targetRecipients, burnAfter: burnAfter)
             timelineEntries = vm.entries
             reloadChat()
             // Notify the mesh network so it can sync the new artifact to peers
@@ -234,7 +343,7 @@ final class AppCoordinator: ObservableObject {
                 node.recordLocalArtifact()
             }
         } catch {
-            print("Seal failed: \(error)")
+            sealError = "Seal failed: \(error.localizedDescription)"
         }
     }
 

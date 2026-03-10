@@ -32,6 +32,11 @@ public final class HandshakeViewModel {
 
     /// Error message if handshake fails.
     public private(set) var errorMessage: String?
+    
+    /// Peer's public key data (available after verifying).
+    public var peerPublicKeyData: Data? {
+        session.peerPublicKeyData
+    }
 
     // MARK: - Internal
 

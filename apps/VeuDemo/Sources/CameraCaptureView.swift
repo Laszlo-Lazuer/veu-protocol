@@ -20,12 +20,25 @@ final class CameraCaptureViewController: UIViewController {
     private var photoOutput: AVCapturePhotoOutput?
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var captureButton: UIButton?
+    private var photoDelegate: PhotoDelegate?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        setupCamera()
+        requestCameraPermission()
         setupCaptureButton()
+    }
+
+    private func requestCameraPermission() {
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            DispatchQueue.main.async {
+                if granted {
+                    self?.setupCamera()
+                } else {
+                    self?.showFallback("Camera access denied.\nGo to Settings → Privacy → Camera to enable.")
+                }
+            }
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -96,9 +109,11 @@ final class CameraCaptureViewController: UIViewController {
 
     @objc private func capturePhoto() {
         let settings = AVCapturePhotoSettings()
-        photoOutput?.capturePhoto(with: settings, delegate: PhotoDelegate(onCapture: { [weak self] data in
+        let delegate = PhotoDelegate(onCapture: { [weak self] data in
             self?.onCapture?(data)
-        }))
+        })
+        photoDelegate = delegate  // Retain delegate until callback fires
+        photoOutput?.capturePhoto(with: settings, delegate: delegate)
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
     }
 
