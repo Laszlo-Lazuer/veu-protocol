@@ -8,6 +8,13 @@ import VeuGhost
 import VeuMesh
 import MultipeerConnectivity
 
+// MARK: - Dev Mode Toggle
+#if DEBUG
+let DEV_MODE = true
+#else
+let DEV_MODE = false
+#endif
+
 /// Central coordinator managing app state and all service lifecycles.
 final class AppCoordinator: ObservableObject {
 
@@ -212,6 +219,13 @@ final class AppCoordinator: ObservableObject {
             
             // Add circle members (self + peer)
             let circleID = vm.circleID
+            print("[AppCoordinator] Handshake confirmed, circleID=\(circleID.prefix(8))…")
+            
+            // Debug: print circle key
+            if let key = state.circleKeys[circleID] {
+                let keyHash = key.keyData.prefix(8).map { String(format: "%02x", $0) }.joined()
+                print("[AppCoordinator] CircleKey hash=\(keyHash)…")
+            }
             
             // Add self as member
             try state.ledger.insertCircleMember(
@@ -234,6 +248,12 @@ final class AppCoordinator: ObservableObject {
             }
             
             reloadTimeline()
+            reloadCircleMembers()
+            
+            // Restart network with the new circle key
+            try networkService?.restart()
+            networkLog.append("🔄 Network restarted with new circle")
+            
             // Clean up proximity session
             proximitySession?.stop()
             proximitySession = nil

@@ -42,6 +42,9 @@ public final class GhostNode: @unchecked Sendable {
 
     /// Dispatch queue for node operations.
     private let queue: DispatchQueue
+    
+    /// Device name for service advertisement.
+    private let deviceName: String
 
     /// Delegate for sync events (forwarded from SyncEngine).
     public weak var syncDelegate: SyncEngineDelegate? {
@@ -58,12 +61,14 @@ public final class GhostNode: @unchecked Sendable {
     ///   - circleID: The Circle to sync.
     ///   - circleKey: The 32-byte Circle symmetric key.
     ///   - ledger: The local artifact Ledger.
-    public init(deviceID: String, circleID: String, circleKey: Data, ledger: Ledger) {
+    ///   - deviceName: Human-readable device name for discovery (default: "Veu").
+    public init(deviceID: String, circleID: String, circleKey: Data, ledger: Ledger, deviceName: String = "Veu") {
         self.deviceID = deviceID
         self.circleID = circleID
         self.circleKey = circleKey
+        self.deviceName = deviceName
         self.queue = DispatchQueue(label: "veu.ghost.\(circleID)", qos: .userInitiated)
-        self.pulse = LocalPulse(circleKey: circleKey, queue: queue)
+        self.pulse = LocalPulse(circleKey: circleKey, deviceName: deviceName, queue: queue)
         self.syncEngine = SyncEngine(deviceID: deviceID, ledger: ledger)
     }
 
@@ -184,6 +189,13 @@ extension GhostNode {
     /// WebSocket relay) to hand off an established connection to the sync layer.
     public func acceptConnection(_ connection: any TransportConnection) {
         let key = connection.endpointDescription
+        
+        // Prevent duplicate connections
+        if connections[key] != nil {
+            print("[GhostNode] Skipping duplicate connection: \(key)")
+            return
+        }
+        
         connections[key] = connection
         listenForMessages(on: connection, key: key)
     }

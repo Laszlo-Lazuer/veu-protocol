@@ -33,11 +33,12 @@ public final class LocalTransport: MeshTransportProtocol {
     ///
     /// - Parameters:
     ///   - circleKey: The 32-byte Circle symmetric key.
+    ///   - deviceName: Human-readable device name for discovery.
     ///   - queue: Dispatch queue for events.
-    public init(circleKey: Data, queue: DispatchQueue = .main) {
+    public init(circleKey: Data, deviceName: String = "Veu", queue: DispatchQueue = .main) {
         self.circleKey = circleKey
         self.queue = queue
-        self.pulse = LocalPulse(circleKey: circleKey, queue: queue)
+        self.pulse = LocalPulse(circleKey: circleKey, deviceName: deviceName, queue: queue)
     }
 
     /// The underlying LocalPulse (exposed for logging/debugging).
@@ -54,22 +55,37 @@ public final class LocalTransport: MeshTransportProtocol {
 
     public func stop() {
         pulse.stop()
+        connectedEndpoints.removeAll()
         state = .disconnected
         delegate?.transport(self, didChangeState: .disconnected)
     }
+    
+    /// Track connected endpoints to prevent duplicates
+    private var connectedEndpoints: Set<String> = []
 }
 
 // MARK: - LocalPulseDelegate
 
 extension LocalTransport: LocalPulseDelegate {
     public func localPulse(_ pulse: LocalPulse, didDiscover endpoint: NWEndpoint, topicHash: String) {
+        let key = "\(endpoint)"
+        
+        // Prevent duplicate connections to the same endpoint
+        guard !connectedEndpoints.contains(key) else {
+            print("[LocalTransport] Skipping duplicate connection to \(key)")
+            return
+        }
+        connectedEndpoints.insert(key)
+        
         let conn = GhostConnection(endpoint: endpoint, circleKey: circleKey)
         conn.start(queue: queue)
         delegate?.transport(self, didConnectPeer: conn)
     }
 
     public func localPulse(_ pulse: LocalPulse, didLose endpoint: NWEndpoint) {
-        delegate?.transport(self, didDisconnectPeer: "\(endpoint)")
+        let key = "\(endpoint)"
+        connectedEndpoints.remove(key)
+        delegate?.transport(self, didDisconnectPeer: key)
     }
 
     public func localPulse(_ pulse: LocalPulse, didAcceptConnection connection: NWConnection) {

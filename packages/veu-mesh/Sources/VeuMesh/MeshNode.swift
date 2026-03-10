@@ -85,16 +85,19 @@ public final class MeshNode {
     ///   - circleKey: The 32-byte Circle symmetric key.
     ///   - ledger: The local artifact Ledger.
     ///   - relayURL: Optional relay server URL (nil disables GlobalTransport).
-    ///   - deviceName: Human-readable device name for Bluetooth mesh.
+    ///   - deviceName: Human-readable device name for discovery.
     public init(deviceID: String, circleID: String, circleKey: Data,
                 ledger: Ledger, relayURL: URL? = nil, deviceName: String = "Veu") {
         self.deviceID = deviceID
         self.circleID = circleID
         self.circleKey = circleKey
+        self.deviceName = deviceName
         self.relayURL = relayURL
         self.queue = DispatchQueue(label: "veu.mesh.\(circleID)", qos: .userInitiated)
-        self.ghostNode = GhostNode(deviceID: deviceID, circleID: circleID, circleKey: circleKey, ledger: ledger)
+        self.ghostNode = GhostNode(deviceID: deviceID, circleID: circleID, circleKey: circleKey, ledger: ledger, deviceName: deviceName)
     }
+    
+    private let deviceName: String
 
     // MARK: - Lifecycle
 
@@ -106,7 +109,7 @@ public final class MeshNode {
         ghostNode.syncDelegate = self
 
         // 1. Local transport (always available)
-        let local = LocalTransport(circleKey: circleKey, queue: queue)
+        let local = LocalTransport(circleKey: circleKey, deviceName: deviceName, queue: queue)
         local.delegate = self
         transports.append(local)
 

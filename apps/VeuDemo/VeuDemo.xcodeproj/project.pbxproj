@@ -19,6 +19,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		149B29191FA378B165DE1DB2 /* VeuDemo.dev.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VeuDemo.dev.entitlements; sourceTree = "<group>"; };
 		17F3AA7928FFE73127F07721 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
 		1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProximitySession.swift; sourceTree = "<group>"; };
 		217FD2B80CA48B526D87EFBA /* DemoRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoRootView.swift; sourceTree = "<group>"; };
@@ -72,6 +73,7 @@
 				217FD2B80CA48B526D87EFBA /* DemoRootView.swift */,
 				9E51303EB4336A9287405B3A /* Info.plist */,
 				1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */,
+				149B29191FA378B165DE1DB2 /* VeuDemo.dev.entitlements */,
 				5A5B9F79E06DD24EDC9636F2 /* VeuDemo.entitlements */,
 				9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */,
 			);
@@ -184,6 +186,7 @@
 				MARKETING_VERSION = 0.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = RELEASE;
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -193,7 +196,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.dev.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M49YLFEMCD;
@@ -206,6 +209,7 @@
 				MARKETING_VERSION = 0.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG DEV_MODE";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
