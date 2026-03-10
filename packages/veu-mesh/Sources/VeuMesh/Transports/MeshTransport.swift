@@ -147,14 +147,19 @@ extension MeshTransport: MCSessionDelegate {
 
     public func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         // Attempt to decode as mesh envelope for relay
-        if let envelope = try? JSONDecoder().decode(MeshEnvelope.self, from: data),
-           envelope.ttl > 0 {
-            relayMessage(envelope.payload, from: peerID, ttl: envelope.ttl)
-        }
-
-        // Forward to the peer connection for sync handling
-        if let peerConn = connectedPeers[peerID] {
-            peerConn.enqueueReceived(data)
+        if let envelope = try? JSONDecoder().decode(MeshEnvelope.self, from: data) {
+            if envelope.ttl > 0 {
+                relayMessage(envelope.payload, from: peerID, ttl: envelope.ttl)
+            }
+            // Enqueue the inner payload, not the envelope wrapper
+            if let peerConn = connectedPeers[peerID] {
+                peerConn.enqueueReceived(envelope.payload)
+            }
+        } else {
+            // Direct message without envelope
+            if let peerConn = connectedPeers[peerID] {
+                peerConn.enqueueReceived(data)
+            }
         }
     }
 

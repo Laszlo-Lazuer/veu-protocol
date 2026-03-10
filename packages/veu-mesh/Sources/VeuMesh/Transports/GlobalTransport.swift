@@ -93,8 +93,8 @@ public final class GlobalTransport: MeshTransportProtocol {
 
         task.resume()
         reconnectAttempt = 0
-        state = .connected
-        delegate?.transport(self, didChangeState: .connected)
+        state = .connecting
+        delegate?.transport(self, didChangeState: .connecting)
 
         // Create the virtual connection
         let conn = RelayTransportConnection(
@@ -141,6 +141,10 @@ public final class GlobalTransport: MeshTransportProtocol {
             guard let self = self else { return }
             switch result {
             case .success(let message):
+                if case .connecting = self.state {
+                    self.state = .connected
+                    self.delegate?.transport(self, didChangeState: .connected)
+                }
                 self.handleWebSocketMessage(message)
                 self.listenForMessages()
 

@@ -288,9 +288,9 @@ func (h *Hub) handleArtifactPush(ctx context.Context, c *Client, msg *IncomingMe
 	data, _ := json.Marshal(notify)
 	h.Broadcast(msg.Topic, c, data)
 
-	// Send APNs push to offline devices.
+	// Send APNs push to offline devices (exclude sender).
 	if h.pusher != nil {
-		go h.sendPushNotifications(ctx, msg.Topic, msg.CID)
+		go h.sendPushNotifications(ctx, msg.Topic, msg.CID, msg.DeviceID)
 	}
 }
 
@@ -347,7 +347,7 @@ func (h *Hub) handleRegisterToken(ctx context.Context, c *Client, msg *IncomingM
 	slog.Info("push token registered", "topic", msg.Topic, "device_id", msg.DeviceID)
 }
 
-func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid string) {
+func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid, senderDeviceID string) {
 	tokens, err := h.store.GetPushTokens(ctx, topicHash)
 	if err != nil {
 		slog.Error("failed to get push tokens", "topic", topicHash, "error", err)
@@ -355,6 +355,9 @@ func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid string) 
 	}
 
 	for _, t := range tokens {
+		if t.DeviceID == senderDeviceID {
+			continue
+		}
 		if err := h.pusher.Send(ctx, t.Token, cid); err != nil {
 			slog.Warn("push notification failed", "device_id", t.DeviceID, "error", err)
 		}
