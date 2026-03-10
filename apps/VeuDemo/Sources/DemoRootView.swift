@@ -646,19 +646,27 @@ struct NetworkTab: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                // Status indicator
-                HStack {
+                // Transport status indicator
+                HStack(spacing: 12) {
                     Circle()
                         .fill(coordinator.networkRunning ? Color.green : Color.red)
                         .frame(width: 12, height: 12)
-                    Text(coordinator.networkRunning ? "Ghost Network Active" : "Ghost Network Offline")
-                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(coordinator.networkRunning ? "Mesh Network Active" : "Mesh Network Offline")
+                            .font(.headline)
+                        Text(coordinator.activeTransport)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    transportIcon
                 }
 
                 if coordinator.networkRunning {
                     VStack(alignment: .leading, spacing: 8) {
                         InfoRow(label: "Device ID", value: coordinator.appState?.identity.deviceID ?? "—")
                         InfoRow(label: "Active Circle", value: coordinator.appState?.activeCircleID.map { String($0.prefix(8)) + "…" } ?? "None")
+                        InfoRow(label: "Transport", value: coordinator.activeTransport)
                         InfoRow(label: "Peers", value: "\(coordinator.peerCount)")
                         InfoRow(label: "Synced Artifacts", value: "\(coordinator.syncedCount)")
                     }
@@ -675,10 +683,23 @@ struct NetworkTab: View {
                     .buttonStyle(.bordered)
                     .tint(.red)
                 } else {
+                    // Relay URL configuration
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Relay Server (optional)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField("wss://relay.example.com", text: $coordinator.relayURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                    }
+                    .padding(.horizontal)
+
                     Button {
                         coordinator.startNetwork()
                     } label: {
-                        Label("Start Ghost Network", systemImage: "antenna.radiowaves.left.and.right")
+                        Label("Start Mesh Network", systemImage: "antenna.radiowaves.left.and.right")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -720,7 +741,25 @@ struct NetworkTab: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("Ghost Network")
+            .navigationTitle("Mesh Network")
+        }
+    }
+
+    @ViewBuilder
+    private var transportIcon: some View {
+        switch coordinator.activeTransport {
+        case "Local":
+            Image(systemName: "wifi")
+                .foregroundColor(.green)
+        case "Mesh":
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .foregroundColor(.blue)
+        case "Global":
+            Image(systemName: "globe")
+                .foregroundColor(.purple)
+        default:
+            Image(systemName: "wifi.slash")
+                .foregroundColor(.gray)
         }
     }
 }

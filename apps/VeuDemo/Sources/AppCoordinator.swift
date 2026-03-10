@@ -1,8 +1,10 @@
 import SwiftUI
+import BackgroundTasks
 import VeuApp
 import VeuAuth
 import VeuGlaze
 import VeuGhost
+import VeuMesh
 import MultipeerConnectivity
 
 /// Central coordinator managing app state and all service lifecycles.
@@ -22,6 +24,8 @@ final class AppCoordinator: ObservableObject {
     @Published var handshakeProgress: Float = 0
     @Published var peerCount = 0
     @Published var networkLog: [String] = []
+    @Published var activeTransport: String = "Offline"
+    @Published var relayURL: String = ""
 
     // Proximity handshake state
     @Published var proximityStatus: String = ""
@@ -35,7 +39,6 @@ final class AppCoordinator: ObservableObject {
     private var handshakeVM: HandshakeViewModel?
     private var timelineVM: TimelineViewModel?
     private var networkService: NetworkService?
-    private var pulseLogger: PulseLogger?
     private var proximitySession: ProximitySession?
 
     // MARK: - Bootstrap
@@ -226,10 +229,9 @@ final class AppCoordinator: ObservableObject {
             let result = try vm.compose(data: data, burnAfter: burnAfter)
             timelineEntries = vm.entries
             reloadChat()
-            // Notify the ghost network so it can sync the new artifact to peers
-            if let node = networkService?.ghostNode, let circleID = state.activeCircleID {
-                node.syncEngine.recordLocalArtifact(circleID: circleID)
-                node.resyncAllPeers()
+            // Notify the mesh network so it can sync the new artifact to peers
+            if let node = networkService?.meshNode, let circleID = state.activeCircleID {
+                node.recordLocalArtifact()
             }
         } catch {
             print("Seal failed: \(error)")
@@ -254,9 +256,8 @@ final class AppCoordinator: ObservableObject {
             timelineEntries = vm.entries
             reloadChat()
             // Sync to peers
-            if let node = networkService?.ghostNode, let circleID = state.activeCircleID {
-                node.syncEngine.recordLocalArtifact(circleID: circleID)
-                node.resyncAllPeers()
+            if let node = networkService?.meshNode, let circleID = state.activeCircleID {
+                node.recordLocalArtifact()
             }
         } catch {
             print("Send message failed: \(error)")
@@ -308,7 +309,8 @@ final class AppCoordinator: ObservableObject {
 
     func startNetwork() {
         guard let state = appState else { return }
-        let service = NetworkService(appState: state)
+        let relay = relayURL.isEmpty ? nil : URL(string: relayURL)
+        let service = NetworkService(appState: state, relayURL: relay)
         networkService = service
 
         service.onArtifactReceived = { [weak self] cid, circleID in
@@ -326,24 +328,39 @@ final class AppCoordinator: ObservableObject {
             }
         }
 
+        service.onTransportChanged = { [weak self] transport in
+            DispatchQueue.main.async {
+                self?.activeTransport = transport
+                self?.networkLog.append("🔄 Transport: \(transport)")
+            }
+        }
+
+        service.onPeerConnected = { [weak self] peerID, transport in
+            DispatchQueue.main.async {
+                self?.peerCount += 1
+                self?.networkLog.append("🔍 Peer connected via \(transport): \(peerID)")
+            }
+        }
+
+        service.onPeerDisconnected = { [weak self] peerID in
+            DispatchQueue.main.async {
+                self?.peerCount = max(0, (self?.peerCount ?? 1) - 1)
+                self?.networkLog.append("👻 Peer disconnected: \(peerID)")
+            }
+        }
+
         do {
             try service.start()
             networkRunning = true
             networkError = nil
-            networkLog.append("🟢 Network started (circle: \(state.activeCircleID?.prefix(8) ?? "?")…)")
-
-            // Log discovery events
-            if let node = service.ghostNode {
-                let originalDelegate = node.pulse.delegate
-                let logger = PulseLogger(
-                    coordinator: self,
-                    inner: originalDelegate
-                )
-                self.pulseLogger = logger
-                node.pulse.delegate = logger
+            activeTransport = service.activeTransport ?? "Connecting…"
+            networkLog.append("🟢 Mesh started (circle: \(state.activeCircleID?.prefix(8) ?? "?")…)")
+            if relay != nil {
+                networkLog.append("🌐 Relay: \(relayURL)")
             }
         } catch {
             networkError = "\(error)"
+            activeTransport = "Offline"
             networkLog.append("🔴 Start failed: \(error)")
         }
     }
@@ -351,8 +368,8 @@ final class AppCoordinator: ObservableObject {
     func stopNetwork() {
         networkService?.stop()
         networkService = nil
-        pulseLogger = nil
         networkRunning = false
+        activeTransport = "Offline"
     }
 }
 
@@ -389,41 +406,65 @@ extension AppCoordinator: ProximitySessionDelegate {
     func proximitySessionDidDisconnect(_ session: ProximitySession) {
         proximityStatus = "Peer disconnected"
     }
-}
 
-// MARK: - Discovery Logger
+    // MARK: - Background Tasks
 
-import Network
-
-final class PulseLogger: LocalPulseDelegate {
-    weak var coordinator: AppCoordinator?
-    weak var inner: LocalPulseDelegate?
-
-    init(coordinator: AppCoordinator, inner: LocalPulseDelegate?) {
-        self.coordinator = coordinator
-        self.inner = inner
+    /// Schedule a background sync refresh task.
+    func scheduleBackgroundSync() {
+        let request = BGAppRefreshTaskRequest(identifier: "com.veu.protocol.sync.refresh")
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 min
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            print("[BG] Failed to schedule refresh: \(error)")
+        }
     }
 
-    func localPulse(_ pulse: LocalPulse, didDiscover endpoint: NWEndpoint, topicHash: String) {
-        DispatchQueue.main.async {
-            self.coordinator?.peerCount += 1
-            self.coordinator?.networkLog.append("🔍 Discovered peer: \(endpoint)")
+    /// Handle a background app refresh task — lightweight delta check.
+    static func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
+        let coordinator = AppCoordinator()
+        coordinator.bootstrap()
+        guard coordinator.appState?.activeCircleID != nil else {
+            task.setTaskCompleted(success: true)
+            return
         }
-        inner?.localPulse(pulse, didDiscover: endpoint, topicHash: topicHash)
+
+        task.expirationHandler = {
+            coordinator.stopNetwork()
+        }
+
+        do {
+            try coordinator.networkService?.start()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
+                coordinator.stopNetwork()
+                task.setTaskCompleted(success: true)
+            }
+        } catch {
+            task.setTaskCompleted(success: false)
+        }
     }
 
-    func localPulse(_ pulse: LocalPulse, didLose endpoint: NWEndpoint) {
-        DispatchQueue.main.async {
-            self.coordinator?.peerCount = max(0, (self.coordinator?.peerCount ?? 1) - 1)
-            self.coordinator?.networkLog.append("👻 Lost peer: \(endpoint)")
+    /// Handle a background processing task — full sync on Wi-Fi + charging.
+    static func handleBackgroundProcessing(_ task: BGProcessingTask) {
+        let coordinator = AppCoordinator()
+        coordinator.bootstrap()
+        guard coordinator.appState?.activeCircleID != nil else {
+            task.setTaskCompleted(success: true)
+            return
         }
-        inner?.localPulse(pulse, didLose: endpoint)
-    }
 
-    func localPulse(_ pulse: LocalPulse, didAcceptConnection connection: NWConnection) {
-        DispatchQueue.main.async {
-            self.coordinator?.networkLog.append("🤝 Accepted connection: \(connection.endpoint)")
+        task.expirationHandler = {
+            coordinator.stopNetwork()
         }
-        inner?.localPulse(pulse, didAcceptConnection: connection)
+
+        do {
+            try coordinator.networkService?.start()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                coordinator.stopNetwork()
+                task.setTaskCompleted(success: true)
+            }
+        } catch {
+            task.setTaskCompleted(success: false)
+        }
     }
 }

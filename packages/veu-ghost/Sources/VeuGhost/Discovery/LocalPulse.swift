@@ -32,7 +32,7 @@ public protocol LocalPulseDelegate: AnyObject {
 /// the Circle topic hash.  Simultaneously browses for peers advertising
 /// the same service.  Only peers sharing a Circle Key can match the
 /// topic hash and initiate a sync.
-public final class LocalPulse {
+public final class LocalPulse: DiscoveryService {
 
     /// The Bonjour service type used for Ghost Network discovery.
     public static let serviceType = "_veu-ghost._tcp"
@@ -60,6 +60,19 @@ public final class LocalPulse {
 
     /// The device name used for the advertised service (to filter self-discovery).
     public var serviceName: String?
+
+    /// Discovery delegate (protocol-conformance bridge).
+    public weak var discoveryDelegate: (any DiscoveryDelegate)?
+
+    /// Start advertising and discovering peers (DiscoveryService conformance).
+    public func startDiscovery() throws {
+        try start()
+    }
+
+    /// Stop advertising and discovering (DiscoveryService conformance).
+    public func stopDiscovery() {
+        stop()
+    }
 
     /// Create a LocalPulse for a given Circle.
     ///

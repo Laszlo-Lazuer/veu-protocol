@@ -44,7 +44,27 @@ This document serves as the persistent context for the Veu protocol's developmen
 - [x] Local Pulse: mDNS/Bonjour peer discovery on same Wi-Fi
 - [x] Artifact publish: encrypt artifact → push to peer over local connection
 - [x] Artifact Ledger sync: update `LEDGER.sql` on receive, drive UI
-- [ ] _Post-POC: IPFS + Tor integration_
+- [x] _Post-POC: IPFS + Tor integration_ → Phase 7: Global Mesh + Offline Relay
+
+### Phase 7 — Global Mesh + Offline Relay (`veu-mesh`, `veu-relay`) 🌐
+> _Always-on, iMessage-like sync across any network — LAN, Bluetooth mesh, and global relay._
+
+- [x] Transport abstraction: `TransportConnection` + `DiscoveryService` protocols in `veu-ghost`
+- [x] GhostNode refactored to accept any transport (transport-agnostic connections)
+- [x] CIDv1 content addressing: SHA-256 → multihash → base32lower (IPFS-compatible)
+- [x] `veu-mesh` package: multi-transport mesh coordinator
+  - [x] `LocalTransport`: wraps existing LocalPulse (LAN/mDNS)
+  - [x] `MeshTransport`: Bluetooth LE + AWDL with multi-hop relay (max 5 hops)
+  - [x] `GlobalTransport`: WebSocket relay client with auto-reconnect
+  - [x] `MeshNode`: top-level coordinator with transport priority (Local > Mesh > Global)
+- [x] `veu-relay` Go server: blind store-and-forward relay
+  - [x] WebSocket hub with circle-scoped topic channels
+  - [x] SQLite store-and-forward (encrypted blobs only)
+  - [x] APNs silent push integration
+  - [x] Docker + self-hosting documentation
+- [x] App integration: NetworkService → MeshNode, transport status UI
+- [x] Background tasks: BGAppRefreshTask + BGProcessingTask + APNs silent push
+- [x] Mesh network UI: transport indicator, relay URL configuration, peer status
 
 ### Phase 5 — POC Demo App (`veu-app`) 📱
 > _Integration app wiring all packages into a runnable on-device demo._
@@ -53,7 +73,7 @@ This document serves as the persistent context for the Veu protocol's developmen
 - [x] AppState: central state manager for identity, circles, and Ledger
 - [x] HandshakeViewModel: Dead Link → QR → short code → confirm → Circle key
 - [x] TimelineViewModel: compose → encrypt → Ledger insert → Glaze seed colors
-- [x] NetworkService: GhostNode lifecycle wrapper with sync delegate bridging
+- [x] NetworkService: MeshNode lifecycle wrapper with multi-transport sync delegate bridging
 - [x] SwiftUI views: HomeView, IdentityView, HandshakeView, TimelineView, ComposeView
 
 ### Phase 6 — On-Device POC Demo (`apps/VeuDemo`) 🚀
