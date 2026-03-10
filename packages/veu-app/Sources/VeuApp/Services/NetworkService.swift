@@ -2,28 +2,38 @@ import Foundation
 import VeuAuth
 import VeuCrypto
 import VeuGhost
+import VeuMesh
 #if canImport(CryptoKit)
 import CryptoKit
 #else
 import Crypto
 #endif
 
-/// Wraps GhostNode lifecycle and forwards sync events to the app layer.
+/// Wraps MeshNode lifecycle and forwards sync events to the app layer.
+///
+/// Manages multi-transport sync (LAN, Bluetooth mesh, global relay) through
+/// a single unified interface.
 public final class NetworkService {
 
     // MARK: - State
 
-    /// Whether the Ghost Network is currently active.
+    /// Whether the mesh network is currently active.
     public private(set) var isRunning: Bool = false
 
-    /// The underlying GhostNode (nil when stopped).
-    public private(set) var ghostNode: GhostNode?
+    /// The underlying MeshNode (nil when stopped).
+    public private(set) var meshNode: MeshNode?
+
+    /// The underlying GhostNode (convenience accessor).
+    public var ghostNode: GhostNode? { meshNode?.ghostNode }
 
     /// Number of artifacts synced in the current session.
     public internal(set) var syncedArtifactCount: Int = 0
 
     /// Last sync error, if any.
     public internal(set) var lastError: String?
+
+    /// The currently active transport name (Local, Mesh, or Global).
+    public var activeTransport: String? { meshNode?.activeTransportName }
 
     /// Callback invoked when a new artifact arrives via sync.
     public var onArtifactReceived: ((String, String) -> Void)?
@@ -34,49 +44,62 @@ public final class NetworkService {
     /// Callback invoked when sync completes with a peer.
     public var onSyncCompleted: ((String) -> Void)?
 
+    /// Callback invoked when the active transport changes.
+    public var onTransportChanged: ((String) -> Void)?
+
+    /// Callback invoked when a peer connects.
+    public var onPeerConnected: ((String, String) -> Void)?
+
+    /// Callback invoked when a peer disconnects.
+    public var onPeerDisconnected: ((String) -> Void)?
+
+    // MARK: - Configuration
+
+    /// Optional relay server URL for global sync.
+    public var relayURL: URL?
+
     // MARK: - Dependencies
 
     private let appState: AppState
 
     // MARK: - Init
 
-    public init(appState: AppState) {
+    public init(appState: AppState, relayURL: URL? = nil) {
         self.appState = appState
+        self.relayURL = relayURL
     }
 
     // MARK: - Lifecycle
 
-    /// Start Ghost Network discovery and sync for the active circle.
+    /// Start mesh network discovery and sync for the active circle.
     public func start() throws {
         guard let circleID = appState.activeCircleID,
               let circleKey = appState.circleKeys[circleID] else {
             throw VeuAppError.noActiveCircle
         }
 
-        let node = GhostNode(
+        let node = MeshNode(
             deviceID: appState.identity.deviceID,
             circleID: circleID,
             circleKey: circleKey.keyData,
-            ledger: appState.ledger
+            ledger: appState.ledger,
+            relayURL: relayURL,
+            deviceName: appState.identity.callsign
         )
 
-        let delegate = SyncDelegate(service: self)
-        node.syncDelegate = delegate
-        self._syncDelegate = delegate
-
+        node.delegate = self
         try node.start()
-        ghostNode = node
+        meshNode = node
         isRunning = true
         syncedArtifactCount = 0
         lastError = nil
     }
 
-    /// Stop Ghost Network.
+    /// Stop mesh network.
     public func stop() {
-        ghostNode?.stop()
-        ghostNode = nil
+        meshNode?.stop()
+        meshNode = nil
         isRunning = false
-        _syncDelegate = nil
     }
 
     /// Restart with the current active circle (e.g., after switching circles).
@@ -85,33 +108,41 @@ public final class NetworkService {
         try start()
     }
 
-    // MARK: - Sync delegate storage (prevent dealloc)
-    private var _syncDelegate: SyncDelegate?
+    /// Register an APNs push token for background wake-up.
+    public func registerPushToken(_ token: String) {
+        meshNode?.registerPushToken(token)
+    }
 }
 
-// MARK: - SyncEngineDelegate bridge
+// MARK: - MeshNodeDelegate
 
-private final class SyncDelegate: SyncEngineDelegate {
-    weak var service: NetworkService?
-
-    init(service: NetworkService) {
-        self.service = service
+extension NetworkService: MeshNodeDelegate {
+    public func meshNode(_ node: MeshNode, didChangeActiveTransport name: String) {
+        onTransportChanged?(name)
     }
 
-    func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String) {
-        service?.syncedArtifactCount += 1
-        service?.onArtifactReceived?(cid, circleID)
+    public func meshNode(_ node: MeshNode, didConnectPeer peerID: String, via transport: String) {
+        onPeerConnected?(peerID, transport)
     }
 
-    func syncEngine(_ engine: SyncEngine, didProcessBurn cid: String, circleID: String) {
-        service?.onBurnProcessed?(cid, circleID)
+    public func meshNode(_ node: MeshNode, didDisconnectPeer peerID: String) {
+        onPeerDisconnected?(peerID)
     }
 
-    func syncEngine(_ engine: SyncEngine, didCompleteSyncWith peerDeviceID: String) {
-        service?.onSyncCompleted?(peerDeviceID)
+    public func meshNode(_ node: MeshNode, didReceiveArtifact cid: String, circleID: String) {
+        syncedArtifactCount += 1
+        onArtifactReceived?(cid, circleID)
     }
 
-    func syncEngine(_ engine: SyncEngine, didFailWith error: VeuGhostError) {
-        service?.lastError = "\(error)"
+    public func meshNode(_ node: MeshNode, didProcessBurn cid: String, circleID: String) {
+        onBurnProcessed?(cid, circleID)
+    }
+
+    public func meshNode(_ node: MeshNode, didCompleteSyncWith peerID: String) {
+        onSyncCompleted?(peerID)
+    }
+
+    public func meshNode(_ node: MeshNode, didFailWith error: Error) {
+        lastError = "\(error)"
     }
 }

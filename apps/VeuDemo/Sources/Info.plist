@@ -27,6 +27,7 @@
 		<string>_veu-ghost._tcp</string>
 		<string>_veu-handshake._tcp</string>
 		<string>_veu-handshake._udp</string>
+		<string>_veu-mesh._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
@@ -41,6 +42,17 @@
 		<key>UIColorName</key>
 		<string>AccentColor</string>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+		<string>remote-notification</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.veu.protocol.sync.refresh</string>
+		<string>com.veu.protocol.sync.processing</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

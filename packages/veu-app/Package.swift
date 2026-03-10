@@ -18,6 +18,7 @@ let package = Package(
         .package(name: "VeuAuth", path: "../veu-auth"),
         .package(name: "VeuGlaze", path: "../veu-glaze"),
         .package(name: "VeuGhost", path: "../veu-ghost"),
+        .package(name: "VeuMesh", path: "../veu-mesh"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
     ],
     targets: [
@@ -28,6 +29,7 @@ let package = Package(
                 .product(name: "VeuAuth", package: "VeuAuth"),
                 .product(name: "VeuGlaze", package: "VeuGlaze"),
                 .product(name: "VeuGhost", package: "VeuGhost"),
+                .product(name: "VeuMesh", package: "VeuMesh"),
                 .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
             ],
             path: "Sources/VeuApp"
