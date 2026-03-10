@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-tests:
+    name: Swift Packages
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - veu-crypto
+          - veu-auth
+          - veu-ghost
+          - veu-glaze
+          - veu-mesh
+          - veu-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: packages/${{ matrix.package }}/.build
+          key: spm-${{ matrix.package }}-${{ hashFiles(format('packages/{0}/Package.resolved', matrix.package)) }}
+          restore-keys: spm-${{ matrix.package }}-
+
+      - name: Build & Test ${{ matrix.package }}
+        working-directory: packages/${{ matrix.package }}
+        run: swift test --parallel
+
+  go-relay:
+    name: Go Relay Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/veu-relay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: services/veu-relay/go.sum
+
+      - name: Vet
+        run: go vet ./...
+        env:
+          CGO_ENABLED: "1"
+
+      - name: Build
+        run: go build -o /dev/null .
+        env:
+          CGO_ENABLED: "1"
+
+      - name: Test
+        run: go test ./... -v -race -timeout 60s
+        env:
+          CGO_ENABLED: "1"
+
+  docker-relay:
+    name: Relay Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        working-directory: services/veu-relay
+        run: docker build -t veu-relay:ci .
