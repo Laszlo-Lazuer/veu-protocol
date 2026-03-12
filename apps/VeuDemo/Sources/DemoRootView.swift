@@ -494,6 +494,7 @@ struct DemoTimelineTab: View {
     let appState: AppState
     @ObservedObject var coordinator: AppCoordinator
     @State private var showCapture = false
+    @State private var fullscreenImage: UIImage?
 
     var body: some View {
         NavigationStack {
@@ -530,6 +531,14 @@ struct DemoTimelineTab: View {
             }
             .sheet(isPresented: $showCapture) {
                 CaptureSheet(coordinator: coordinator, isPresented: $showCapture)
+            }
+            .fullScreenCover(item: Binding<IdentifiableImage?>(
+                get: { fullscreenImage.map { IdentifiableImage(image: $0) } },
+                set: { fullscreenImage = $0?.image }
+            )) { item in
+                FullscreenImageViewer(image: item.image) {
+                    fullscreenImage = nil
+                }
             }
         }
     }
@@ -596,6 +605,7 @@ struct DemoTimelineTab: View {
                             .scaledToFill()
                             .frame(height: payload.caption != nil ? height - 48 : height)
                             .clipped()
+                            .onTapGesture { fullscreenImage = uiImage }
                         if let caption = payload.caption {
                             Text(caption)
                                 .font(.subheadline)
@@ -611,6 +621,7 @@ struct DemoTimelineTab: View {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
+                        .onTapGesture { fullscreenImage = uiImage }
                 } else if let data = entry.plaintextData,
                           let text = String(data: data, encoding: .utf8) {
                     VStack {
@@ -938,12 +949,29 @@ struct CaptureSheet: View {
         }
     }
     
+    /// Compress image to ≤1080px longest edge at 70% JPEG quality.
+    private func compressForSending(_ rawData: Data) -> Data {
+        guard let image = UIImage(data: rawData) else { return rawData }
+        let maxDimension: CGFloat = 1080
+        let size = image.size
+        let scale: CGFloat
+        if max(size.width, size.height) > maxDimension {
+            scale = maxDimension / max(size.width, size.height)
+        } else {
+            scale = 1.0
+        }
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
+        return resized.jpegData(compressionQuality: 0.7) ?? rawData
+    }
+
     private func sealContent() {
         let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let data: Data
         if let imageData = capturedData {
-            // Photo (with optional caption) — encode as PostPayload
-            let payload = PostPayload(imageData: imageData, caption: caption.isEmpty ? nil : caption)
+            let compressed = compressForSending(imageData)
+            let payload = PostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
             guard let encoded = try? JSONEncoder().encode(payload) else { return }
             data = encoded
         } else {
@@ -1099,6 +1127,84 @@ struct InfoRow: View {
             Text(value)
                 .font(.system(.body, design: .monospaced))
         }
+    }
+}
+
+// MARK: - Fullscreen Image Viewer
+
+private struct IdentifiableImage: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+struct FullscreenImageViewer: View {
+    let image: UIImage
+    let onDismiss: () -> Void
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .scaleEffect(scale)
+                .offset(offset)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            scale = lastScale * value
+                        }
+                        .onEnded { value in
+                            lastScale = max(scale, 1.0)
+                            scale = lastScale
+                            if lastScale == 1.0 {
+                                withAnimation(.spring()) { offset = .zero }
+                                lastOffset = .zero
+                            }
+                        }
+                )
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { value in
+                            if scale > 1.0 {
+                                offset = CGSize(
+                                    width: lastOffset.width + value.translation.width,
+                                    height: lastOffset.height + value.translation.height
+                                )
+                            }
+                        }
+                        .onEnded { value in
+                            lastOffset = offset
+                        }
+                )
+                .onTapGesture(count: 2) {
+                    withAnimation(.spring()) {
+                        if scale > 1.0 {
+                            scale = 1.0
+                            lastScale = 1.0
+                            offset = .zero
+                            lastOffset = .zero
+                        } else {
+                            scale = 3.0
+                            lastScale = 3.0
+                        }
+                    }
+                }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { onDismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding()
+            }
+        }
+        .statusBarHidden()
     }
 }
 
