@@ -42,6 +42,19 @@ struct DemoRootView: View {
                 .tag(4)
         }
         .tint(.green)
+        .onChange(of: selectedTab) { newTab in
+            if newTab == 3 {
+                // Entering timeline — prompt FaceID if not already unlocked
+                if !coordinator.sessionUnlocked {
+                    coordinator.performSessionUnlock { _ in }
+                }
+            } else {
+                // Leaving timeline — lock so user must re-auth on return
+                if coordinator.sessionUnlocked {
+                    coordinator.lockSession()
+                }
+            }
+        }
         .alert("Error", isPresented: .init(
             get: { coordinator.sealError != nil },
             set: { if !$0 { coordinator.sealError = nil } }

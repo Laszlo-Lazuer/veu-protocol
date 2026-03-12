@@ -207,7 +207,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.6.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
+				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG DEV_MODE";
 				SWIFT_VERSION = 5.9;

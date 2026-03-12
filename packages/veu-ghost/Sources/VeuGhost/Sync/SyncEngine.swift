@@ -126,13 +126,14 @@ public final class SyncEngine {
         if let details = try? ledger.listArtifactDetails(circleID: circleID) {
             print("[SyncEngine] Local artifacts for circle \(String(circleID.prefix(8)))…: \(details.count)")
             for detail in details {
+                let origin = detail.senderID ?? deviceID
                 let payload = GhostMessage.ArtifactPushPayload(
                     cid: detail.cid,
                     circleID: circleID,
                     artifactType: detail.artifactType,
                     encryptedMeta: detail.encryptedMeta,
-                    sequence: localClock.sequence(for: deviceID),
-                    originDeviceID: deviceID,
+                    sequence: localClock.sequence(for: origin),
+                    originDeviceID: origin,
                     burnAfter: detail.burnAfter
                 )
                 artifactsToPush.append(payload)
@@ -252,14 +253,16 @@ public final class SyncEngine {
                 circleID: artifact.circleID,
                 artifactType: artifact.artifactType,
                 encryptedMeta: artifact.encryptedMeta,
+                senderID: artifact.originDeviceID,
                 burnAfter: artifact.burnAfter
             )
             try ledger.markSynced(cid: artifact.cid)
             print("[SyncEngine] ✅ Stored artifact \(String(artifact.cid.prefix(8)))…")
             delegate?.syncEngine(self, didReceiveArtifact: artifact.cid, circleID: artifact.circleID)
         } catch let error as VeuAuthError {
-            // UNIQUE constraint = artifact already exists — skip silently
-            if case .ledgerError(let msg) = error, msg.contains("UNIQUE constraint") {
+            // Duplicate artifact — skip silently (UNIQUE constraint or step-result mismatch)
+            if case .ledgerError(let msg) = error,
+               msg.contains("UNIQUE constraint") || msg.contains("Insert failed") {
                 print("[SyncEngine] ⏭️ Artifact \(String(artifact.cid.prefix(8)))… already exists, skipping")
             } else {
                 print("[SyncEngine] ❌ Store failed: \(error)")
