@@ -38,6 +38,13 @@ public final class RelayTransportConnection: TransportConnection, @unchecked Sen
             let envelope = try message.seal(with: circleKey)
             let base64 = envelope.base64EncodedString()
 
+            // Validate against relay's 5MB payload limit
+            if base64.utf8.count > 4_500_000 {
+                print("[GlobalTransport] ⚠️ Payload too large for relay (\(base64.utf8.count / 1024)KB), skipping")
+                completion(.failure(.connectionFailed("Payload too large for relay (\(base64.utf8.count / 1024)KB)")))
+                return
+            }
+
             // Wrap in relay protocol message
             let cid = extractCID(from: message) ?? "sync"
             let relayMsg = RelayMessage.artifactPush(
@@ -49,10 +56,13 @@ public final class RelayTransportConnection: TransportConnection, @unchecked Sen
                 return
             }
 
+            print("[GlobalTransport] Sending \(jsonData.count / 1024)KB via relay (cid: \(cid))")
             webSocketTask.send(.string(jsonString)) { error in
                 if let error = error {
+                    print("[GlobalTransport] ❌ Send failed: \(error)")
                     completion(.failure(.connectionFailed(error.localizedDescription)))
                 } else {
+                    print("[GlobalTransport] ✅ Sent \(cid) via relay")
                     completion(.success(()))
                 }
             }

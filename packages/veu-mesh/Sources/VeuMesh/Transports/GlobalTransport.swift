@@ -55,6 +55,7 @@ public final class GlobalTransport: MeshTransportProtocol {
     private var reconnectAttempt = 0
     private var maxReconnectDelay: TimeInterval = 60
     private var isReconnecting = false
+    private var lastConnectedTime: Int = Int(Date().timeIntervalSince1970)
 
     /// Create a GlobalTransport for a Circle.
     ///
@@ -108,6 +109,9 @@ public final class GlobalTransport: MeshTransportProtocol {
 
         // Register push token if available
         registerPushTokenIfNeeded()
+
+        // Pull any stored artifacts from the relay
+        pullMissedArtifacts()
 
         // Start listening for messages
         listenForMessages()
@@ -204,15 +208,34 @@ public final class GlobalTransport: MeshTransportProtocol {
         reconnectAttempt += 1
         let delay = min(pow(2.0, Double(reconnectAttempt)), maxReconnectDelay)
 
+        print("[GlobalTransport] Scheduling reconnect #\(reconnectAttempt) in \(delay)s")
         DispatchQueue.global().asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self else { return }
             self.isReconnecting = false
             do {
                 try self.start()
+                self.pullMissedArtifacts()
             } catch {
                 print("[GlobalTransport] Reconnect failed: \(error)")
             }
         }
+    }
+
+    /// Pull artifacts stored on the relay since we last connected.
+    private func pullMissedArtifacts() {
+        guard let task = webSocketTask else { return }
+        let pullMsg = RelayMessage.pullRequest(
+            RelayMessage.PullRequestPayload(topic: topicHash, since: lastConnectedTime)
+        )
+        guard let data = try? JSONEncoder().encode(pullMsg),
+              let json = String(data: data, encoding: .utf8) else { return }
+        print("[GlobalTransport] Pulling missed artifacts since \(lastConnectedTime)")
+        task.send(.string(json)) { error in
+            if let error = error {
+                print("[GlobalTransport] Pull request failed: \(error)")
+            }
+        }
+        lastConnectedTime = Int(Date().timeIntervalSince1970)
     }
 }
 
