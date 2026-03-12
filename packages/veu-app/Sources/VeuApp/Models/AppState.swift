@@ -49,33 +49,40 @@ public final class AppState {
     }
 
     /// Bootstrap app state: restore from persistence or create fresh.
-    /// - Parameter ledgerPath: Path to SQLite database (defaults to Documents/veu-ledger.db)
+    /// - Parameter ledgerPath: Path to SQLite database (defaults to Documents/veu-ledger.db).
+    ///   Pass `":memory:"` for tests — this skips Keychain entirely.
     public static func bootstrap(ledgerPath: String? = nil) throws -> AppState {
-        let keychain = KeychainService.shared
-        
-        // 1. Check Keychain for existing identity, or generate fresh
+        let isTestMode = ledgerPath == ":memory:"
+
+        // 1. Resolve identity
         let identity: Identity
-        if let existing = keychain.loadIdentity() {
-            identity = existing
-        } else {
+        if isTestMode {
             identity = Identity.generate()
-            try keychain.saveIdentity(identity)
+        } else {
+            let keychain = KeychainService.shared
+            if let existing = keychain.loadIdentity() {
+                identity = existing
+            } else {
+                identity = Identity.generate()
+                try keychain.saveIdentity(identity)
+            }
         }
         
-        // 2. Open persistent SQLite (or in-memory for testing)
+        // 2. Open SQLite
         let path = ledgerPath ?? Self.defaultLedgerPath()
         let ledger = try Ledger(path: path)
         
         // 3. Create AppState
         let state = try AppState(identity: identity, ledger: ledger)
         
-        // 4. Reload circle keys from Keychain
-        state.circleKeys = keychain.loadAllCircleKeys()
-        
-        // 5. Restore active circle from UserDefaults
-        if let savedActiveID = UserDefaults.standard.string(forKey: activeCircleKey),
-           state.circleKeys[savedActiveID] != nil {
-            state.activeCircleID = savedActiveID
+        // 4. Restore persisted state (skip in test mode)
+        if !isTestMode {
+            let keychain = KeychainService.shared
+            state.circleKeys = keychain.loadAllCircleKeys()
+            if let savedActiveID = UserDefaults.standard.string(forKey: activeCircleKey),
+               state.circleKeys[savedActiveID] != nil {
+                state.activeCircleID = savedActiveID
+            }
         }
         
         return state
@@ -111,8 +118,10 @@ public final class AppState {
         let encryptedName = Data(circleID.utf8)
         try ledger.insertCircle(circleID: circleID, encryptedName: encryptedName)
         
-        // Persist to Keychain
-        try KeychainService.shared.saveCircleKey(circleKey, for: circleID)
+        // Persist to Keychain (skip for in-memory test DBs)
+        if ledger.path != ":memory:" {
+            try KeychainService.shared.saveCircleKey(circleKey, for: circleID)
+        }
         circleKeys[circleID] = circleKey
         circleIDs = try ledger.listCircles()
     }
