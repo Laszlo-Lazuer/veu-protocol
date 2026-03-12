@@ -43,13 +43,13 @@ struct DemoRootView: View {
         }
         .tint(.green)
         .onChange(of: selectedTab) { newTab in
-            if newTab == 3 {
-                // Entering timeline — prompt FaceID if not already unlocked
+            if newTab == 2 || newTab == 3 {
+                // Entering chat or timeline — prompt FaceID if not already unlocked
                 if !coordinator.sessionUnlocked {
                     coordinator.performSessionUnlock { _ in }
                 }
             } else {
-                // Leaving timeline — lock so user must re-auth on return
+                // Leaving protected tabs — lock so user must re-auth on return
                 if coordinator.sessionUnlocked {
                     coordinator.lockSession()
                 }
@@ -337,7 +337,25 @@ struct ChatTab: View {
     var body: some View {
         NavigationStack {
             Group {
-                if appState.activeCircleID == nil {
+                if !coordinator.sessionUnlocked {
+                    VStack(spacing: 16) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 48))
+                            .foregroundColor(.green)
+                        Text("Encrypted Chat")
+                            .font(.headline)
+                        Text("Authenticate to view messages.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Button {
+                            coordinator.performSessionUnlock { _ in }
+                        } label: {
+                            Label("Unlock with Face ID", systemImage: "faceid")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    }
+                } else if appState.activeCircleID == nil {
                     VStack(spacing: 12) {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(.system(size: 48))
