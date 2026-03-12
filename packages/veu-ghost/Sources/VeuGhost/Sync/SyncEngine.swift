@@ -92,12 +92,12 @@ public final class SyncEngine {
             )
         )
 
+        // Only send the request — the caller's listenForMessages loop handles
+        // the response.  Starting a second receive chain here would corrupt the
+        // NWConnection's length-prefixed framing (competing reads).
         connection.send(request) { [weak self] result in
-            switch result {
-            case .failure(let error):
+            if case .failure(let error) = result {
                 self?.delegate?.syncEngine(self!, didFailWith: error)
-            case .success:
-                self?.receiveArtifacts(circleID: circleID, connection: connection, remaining: nil)
             }
         }
     }

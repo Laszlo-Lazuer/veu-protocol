@@ -108,6 +108,7 @@ public final class GhostNode: @unchecked Sendable {
             guard let self = self else { return }
             switch state {
             case .ready:
+                self.listenForMessages(on: conn, key: key)
                 self.syncEngine.initiateSync(circleID: self.circleID, connection: conn)
             case .failed(_), .cancelled:
                 self.connections.removeValue(forKey: key)

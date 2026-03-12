@@ -367,6 +367,7 @@ struct ChatTab: View {
                                 .padding(.horizontal)
                                 .padding(.top, 8)
                             }
+                            .scrollDismissesKeyboard(.interactively)
                             .onChange(of: coordinator.chatMessages.count) { _ in
                                 if let last = coordinator.chatMessages.last {
                                     withAnimation {
@@ -388,6 +389,12 @@ struct ChatTab: View {
                                 .padding(.vertical, 8)
                                 .background(Color(.systemGray6))
                                 .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .toolbar {
+                                    ToolbarItemGroup(placement: .keyboard) {
+                                        Spacer()
+                                        Button("Done") { isInputFocused = false }
+                                    }
+                                }
 
                             Button {
                                 let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
