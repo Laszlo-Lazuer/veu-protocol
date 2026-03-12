@@ -312,7 +312,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
             reloadChat()
             reloadCircleMembers()
         } catch {
@@ -356,7 +356,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             let result = try vm.compose(data: data, targetRecipients: targetRecipients, burnAfter: burnAfter)
-            timelineEntries = vm.entries
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
             reloadChat()
             // Notify the mesh network so it can sync the new artifact to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
@@ -382,7 +382,7 @@ final class AppCoordinator: ObservableObject {
             )
             let data = try JSONEncoder().encode(chatPayload)
             let result = try vm.compose(data: data, artifactType: "message")
-            timelineEntries = vm.entries
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
             reloadChat()
             // Sync to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
@@ -399,7 +399,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
         } catch {
             print("Reload failed: \(error)")
             return

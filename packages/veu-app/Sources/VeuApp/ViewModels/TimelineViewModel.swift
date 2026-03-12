@@ -68,7 +68,6 @@ public final class TimelineViewModel {
         let myDeviceID = appState.identity.deviceID
 
         let details = try appState.ledger.listArtifactDetails(circleID: circleID)
-            .filter { $0.artifactType != "message" }
         entries = details.map { detail in
             let seedData = GlazeSeed.glazeSeed(
                 from: Data(detail.cid.utf8),
