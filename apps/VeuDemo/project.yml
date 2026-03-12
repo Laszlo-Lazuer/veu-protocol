@@ -22,10 +22,16 @@ targets:
         MARKETING_VERSION: "0.6.0"
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_FILE: Sources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Sources/VeuDemo.entitlements
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: NO
         DEVELOPMENT_TEAM: ""
+      configs:
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Sources/VeuDemo.dev.entitlements
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG DEV_MODE
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Sources/VeuDemo.entitlements
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: RELEASE
     dependencies:
       - package: VeuApp
       - sdk: MultipeerConnectivity.framework

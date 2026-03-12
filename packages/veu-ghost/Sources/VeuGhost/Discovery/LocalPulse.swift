@@ -60,6 +60,9 @@ public final class LocalPulse: DiscoveryService {
 
     /// The device name used for the advertised service (to filter self-discovery).
     public var serviceName: String?
+    
+    /// Pre-computed expected service name prefix (for self-filtering before registration completes).
+    private var expectedServiceNamePrefix: String?
 
     /// Discovery delegate (protocol-conformance bridge).
     public weak var discoveryDelegate: (any DiscoveryDelegate)?
@@ -78,12 +81,17 @@ public final class LocalPulse: DiscoveryService {
     ///
     /// - Parameters:
     ///   - circleKey: The 32-byte Circle symmetric key.
+    ///   - deviceName: Human-readable device name (callsign).
     ///   - queue: Dispatch queue for events (default: `.main`).
-    public init(circleKey: Data, queue: DispatchQueue = .main) {
+    public init(circleKey: Data, deviceName: String = "Veu", queue: DispatchQueue = .main) {
         self.circleKey = circleKey
         self.topicHash = GhostConnection.circleTopicHash(circleKey: circleKey)
+        self.deviceName = deviceName
         self.queue = queue
     }
+    
+    /// The device name for service advertisement.
+    private let deviceName: String
 
     // MARK: - Start / Stop
 
@@ -108,8 +116,17 @@ public final class LocalPulse: DiscoveryService {
             throw VeuGhostError.discoveryFailed("Failed to create listener: \(error.localizedDescription)")
         }
 
+        // Embed topic hash prefix in service name for reliable filtering
+        // Format: "DeviceName~TopicPrefix" (e.g., "Squirrel~de23f5f8")
+        let topicPrefix = String(topicHash.prefix(8))
+        let advertisedName = "\(deviceName)~\(topicPrefix)"
+        
+        // Pre-compute the expected service name prefix for self-filtering
+        // The OS may append " (2)", " (3)", etc. for duplicate names
+        self.expectedServiceNamePrefix = advertisedName
+        
         let txtRecord = NWTXTRecord(["topic": topicHash])
-        listener.service = NWListener.Service(type: Self.serviceType, txtRecord: txtRecord)
+        listener.service = NWListener.Service(name: advertisedName, type: Self.serviceType, txtRecord: txtRecord)
         // Capture advertised name after listener starts for self-filtering
         listener.serviceRegistrationUpdateHandler = { [weak self] change in
             if case .add(let endpoint) = change,
@@ -143,29 +160,39 @@ public final class LocalPulse: DiscoveryService {
         let browserParams = NWParameters.tcp
         browserParams.includePeerToPeer = true
         let browser = NWBrowser(for: descriptor, using: browserParams)
+        let ourTopicPrefix = String(self.topicHash.prefix(8))
 
         browser.browseResultsChangedHandler = { [weak self] results, changes in
             guard let self = self else { return }
             print("[LocalPulse] Browse results changed: \(changes.count) changes, \(results.count) total results")
             for change in changes {
                 switch change {
-                case .added(let result):
-                    // Skip our own service
-                    if case .service(let name, _, _, _) = result.endpoint,
-                       name == self.serviceName {
+                case .added(let result), .changed(old: _, new: let result, flags: _):
+                    // Extract service name and check topic prefix
+                    guard case .service(let name, _, _, _) = result.endpoint else { continue }
+                    
+                    // Skip our own service (check both registered name and expected prefix)
+                    if name == self.serviceName || self.isSelfService(name) {
                         print("[LocalPulse] Skipping self: \(name)")
                         continue
                     }
-                    let peerTopic = self.extractTopicHash(from: result)
-                    print("[LocalPulse] Peer added: \(result.endpoint), topic=\(peerTopic ?? "nil"), ours=\(self.topicHash.prefix(16))…")
-                    if let peerTopic = peerTopic, peerTopic == self.topicHash {
+                    
+                    // Check topic prefix in service name (format: "DeviceName~TopicPrefix")
+                    let peerTopicPrefix = self.extractTopicPrefix(from: name)
+                    let changeType = { () -> String in
+                        if case .added = change { return "added" }
+                        return "changed"
+                    }()
+                    print("[LocalPulse] Peer \(changeType): \(name), topicPrefix=\(peerTopicPrefix ?? "nil"), ours=\(ourTopicPrefix)")
+                    
+                    if let peerTopicPrefix = peerTopicPrefix, peerTopicPrefix == ourTopicPrefix {
                         print("[LocalPulse] ✅ Topic match — connecting to \(result.endpoint)")
-                        self.delegate?.localPulse(self, didDiscover: result.endpoint, topicHash: peerTopic)
-                    } else if peerTopic == nil {
-                        // TXT record not yet resolved — connect optimistically since
-                        // only circle members advertise _veu-ghost._tcp
-                        print("[LocalPulse] ⚡ TXT not resolved — connecting optimistically to \(result.endpoint)")
                         self.delegate?.localPulse(self, didDiscover: result.endpoint, topicHash: self.topicHash)
+                    } else if let peerTopicPrefix = peerTopicPrefix, peerTopicPrefix != ourTopicPrefix {
+                        print("[LocalPulse] ❌ Topic mismatch — ignoring \(name)")
+                    } else {
+                        // Old-style service name without topic prefix — skip
+                        print("[LocalPulse] ⏳ No topic in name — ignoring legacy service \(name)")
                     }
                 case .removed(let result):
                     print("[LocalPulse] Peer removed: \(result.endpoint)")
@@ -200,6 +227,20 @@ public final class LocalPulse: DiscoveryService {
 
     // MARK: - Private
 
+    /// Extract topic prefix from service name (format: "DeviceName~TopicPrefix")
+    private func extractTopicPrefix(from serviceName: String) -> String? {
+        let parts = serviceName.split(separator: "~")
+        guard parts.count == 2 else { return nil }
+        return String(parts[1])
+    }
+    
+    /// Check if a service name represents our own service (handles OS suffixes like " (2)")
+    private func isSelfService(_ name: String) -> Bool {
+        guard let prefix = expectedServiceNamePrefix else { return false }
+        // Exact match or starts with our expected name followed by OS suffix
+        return name == prefix || name.hasPrefix(prefix + " (")
+    }
+    
     private func extractTopicHash(from result: NWBrowser.Result) -> String? {
         if case .bonjour(let record) = result.metadata {
             return record["topic"]

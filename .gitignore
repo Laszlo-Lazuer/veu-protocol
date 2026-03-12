@@ -1,2 +1,3 @@
 .build/
 services/veu-relay/veu-relay
+apps/VeuDemo/build/

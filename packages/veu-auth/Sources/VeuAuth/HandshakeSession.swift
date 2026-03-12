@@ -52,6 +52,11 @@ public final class HandshakeSession {
     private var remotePublicKey: Curve25519.KeyAgreement.PublicKey?
     private let createdAt: Date
     private let timeout: TimeInterval
+    
+    /// The peer's X25519 public key data (available after verifying phase).
+    public var peerPublicKeyData: Data? {
+        remotePublicKey?.rawRepresentation
+    }
 
     // MARK: - Init
 

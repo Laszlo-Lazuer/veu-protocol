@@ -9,6 +9,12 @@ struct ChatPayload: Codable {
     let timestamp: TimeInterval
 }
 
+/// Wire format for timeline posts that combine image data with a caption.
+struct PostPayload: Codable {
+    let imageData: Data
+    let caption: String?
+}
+
 /// Decoded chat message for UI display.
 struct ChatMessage: Identifiable, Equatable {
     let id: String

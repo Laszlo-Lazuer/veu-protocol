@@ -42,6 +42,9 @@ public final class GhostNode: @unchecked Sendable {
 
     /// Dispatch queue for node operations.
     private let queue: DispatchQueue
+    
+    /// Device name for service advertisement.
+    private let deviceName: String
 
     /// Delegate for sync events (forwarded from SyncEngine).
     public weak var syncDelegate: SyncEngineDelegate? {
@@ -58,12 +61,14 @@ public final class GhostNode: @unchecked Sendable {
     ///   - circleID: The Circle to sync.
     ///   - circleKey: The 32-byte Circle symmetric key.
     ///   - ledger: The local artifact Ledger.
-    public init(deviceID: String, circleID: String, circleKey: Data, ledger: Ledger) {
+    ///   - deviceName: Human-readable device name for discovery (default: "Veu").
+    public init(deviceID: String, circleID: String, circleKey: Data, ledger: Ledger, deviceName: String = "Veu") {
         self.deviceID = deviceID
         self.circleID = circleID
         self.circleKey = circleKey
+        self.deviceName = deviceName
         self.queue = DispatchQueue(label: "veu.ghost.\(circleID)", qos: .userInitiated)
-        self.pulse = LocalPulse(circleKey: circleKey, queue: queue)
+        self.pulse = LocalPulse(circleKey: circleKey, deviceName: deviceName, queue: queue)
         self.syncEngine = SyncEngine(deviceID: deviceID, ledger: ledger)
     }
 
@@ -82,11 +87,15 @@ public final class GhostNode: @unchecked Sendable {
     /// Stop discovery and disconnect all peers.
     public func stop() {
         pulse.stop()
-        for (_, conn) in connections {
-            conn.cancel()
-        }
-        connections.removeAll()
         isRunning = false
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            for (_, conn) in self.connections {
+                conn.cancel()
+            }
+            self.connections.removeAll()
+            self.pendingArtifactCount.removeAll()
+        }
     }
 
     // MARK: - Outbound Sync
@@ -95,61 +104,70 @@ public final class GhostNode: @unchecked Sendable {
     ///
     /// - Parameter endpoint: The peer's NWEndpoint.
     public func connectAndSync(endpoint: NWEndpoint) {
-        let conn = GhostConnection(endpoint: endpoint, circleKey: circleKey)
-        let key = "\(endpoint)"
-        connections[key] = conn
-
-        conn.stateHandler = { [weak self] state in
+        queue.async { [weak self] in
             guard let self = self else { return }
-            switch state {
-            case .ready:
-                self.syncEngine.initiateSync(circleID: self.circleID, connection: conn)
-            case .failed(_), .cancelled:
-                self.connections.removeValue(forKey: key)
-            default:
-                break
-            }
-        }
+            let conn = GhostConnection(endpoint: endpoint, circleKey: self.circleKey)
+            let key = "\(endpoint)"
+            self.connections[key] = conn
 
-        conn.start(queue: queue)
+            conn.stateHandler = { [weak self] state in
+                guard let self = self else { return }
+                self.queue.async {
+                    switch state {
+                    case .ready:
+                        self.listenForMessages(on: conn, key: key)
+                        self.syncEngine.initiateSync(circleID: self.circleID, connection: conn)
+                    case .failed(_), .cancelled:
+                        self.connections.removeValue(forKey: key)
+                    default:
+                        break
+                    }
+                }
+            }
+
+            conn.start(queue: self.queue)
+        }
     }
 
     /// Re-sync with all currently connected peers (e.g., after sealing a new artifact).
     /// Since the sync protocol has the responder push to the initiator, we directly
     /// push our new artifacts and then ask the peer to sync back.
     public func resyncAllPeers() {
-        print("[GhostNode] resyncAllPeers: \(connections.count) connections")
-        guard let details = try? syncEngine.ledger.listArtifactDetails(circleID: circleID) else { return }
-        let localClock = syncEngine.clock(for: circleID)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            print("[GhostNode] resyncAllPeers: \(self.connections.count) connections")
+            guard let details = try? self.syncEngine.ledger.listArtifactDetails(circleID: self.circleID) else { return }
+            let localClock = self.syncEngine.clock(for: self.circleID)
 
-        let payloads = details.map { detail in
-            GhostMessage.ArtifactPushPayload(
-                cid: detail.cid,
-                circleID: circleID,
-                artifactType: detail.artifactType,
-                encryptedMeta: detail.encryptedMeta,
-                sequence: localClock.sequence(for: syncEngine.deviceID),
-                originDeviceID: syncEngine.deviceID,
-                burnAfter: detail.burnAfter
-            )
-        }
-
-        for (key, conn) in connections {
-            print("[GhostNode] Pushing \(payloads.count) artifacts to \(key)")
-            let header = GhostMessage.syncResponse(
-                GhostMessage.SyncResponsePayload(
-                    deviceID: syncEngine.deviceID,
-                    vectorClock: localClock,
-                    artifactCount: payloads.count
+            let payloads = details.map { detail in
+                GhostMessage.ArtifactPushPayload(
+                    cid: detail.cid,
+                    circleID: self.circleID,
+                    artifactType: detail.artifactType,
+                    encryptedMeta: detail.encryptedMeta,
+                    sequence: localClock.sequence(for: self.syncEngine.deviceID),
+                    originDeviceID: self.syncEngine.deviceID,
+                    burnAfter: detail.burnAfter
                 )
-            )
-            conn.send(header) { [weak self] result in
-                guard let self = self else { return }
-                if case .failure(let error) = result {
-                    print("[GhostNode] Push header failed: \(error)")
-                    return
+            }
+
+            for (key, conn) in self.connections {
+                print("[GhostNode] Pushing \(payloads.count) artifacts to \(key)")
+                let header = GhostMessage.syncResponse(
+                    GhostMessage.SyncResponsePayload(
+                        deviceID: self.syncEngine.deviceID,
+                        vectorClock: localClock,
+                        artifactCount: payloads.count
+                    )
+                )
+                conn.send(header) { [weak self] result in
+                    guard let self = self else { return }
+                    if case .failure(let error) = result {
+                        print("[GhostNode] Push header failed: \(error)")
+                        return
+                    }
+                    self.syncEngine.pushArtifactsPublic(payloads, connection: conn, circleID: self.circleID, peerDeviceID: key)
                 }
-                self.syncEngine.pushArtifactsPublic(payloads, connection: conn, circleID: self.circleID, peerDeviceID: key)
             }
         }
     }
@@ -164,9 +182,12 @@ extension GhostNode: LocalPulseDelegate {
     }
 
     public func localPulse(_ pulse: LocalPulse, didLose endpoint: NWEndpoint) {
-        let key = "\(endpoint)"
-        connections[key]?.cancel()
-        connections.removeValue(forKey: key)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let key = "\(endpoint)"
+            self.connections[key]?.cancel()
+            self.connections.removeValue(forKey: key)
+        }
     }
 
     public func localPulse(_ pulse: LocalPulse, didAcceptConnection connection: NWConnection) {
@@ -183,54 +204,66 @@ extension GhostNode {
     /// This is the primary entry point for external transports (Bluetooth mesh,
     /// WebSocket relay) to hand off an established connection to the sync layer.
     public func acceptConnection(_ connection: any TransportConnection) {
-        let key = connection.endpointDescription
-        connections[key] = connection
-        listenForMessages(on: connection, key: key)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            let key = connection.endpointDescription
+            
+            // Prevent duplicate connections
+            if self.connections[key] != nil {
+                print("[GhostNode] Skipping duplicate connection: \(key)")
+                return
+            }
+            
+            self.connections[key] = connection
+            self.listenForMessages(on: connection, key: key)
+        }
     }
 
     private func listenForMessages(on conn: any TransportConnection, key: String) {
         conn.receive { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .success(.syncRequest(let request)):
-                print("[GhostNode] Received syncRequest from \(request.deviceID)")
-                self.syncEngine.handleSyncRequest(request, connection: conn)
-                self.listenForMessages(on: conn, key: key)
+            self.queue.async {
+                switch result {
+                case .success(.syncRequest(let request)):
+                    print("[GhostNode] Received syncRequest from \(request.deviceID)")
+                    self.syncEngine.handleSyncRequest(request, connection: conn)
+                    self.listenForMessages(on: conn, key: key)
 
-            case .success(.syncResponse(let response)):
-                print("[GhostNode] Received syncResponse: \(response.artifactCount) artifacts incoming")
-                if response.artifactCount == 0 {
-                    var vc = self.syncEngine.clock(for: self.circleID)
-                    vc.merge(response.vectorClock)
-                    self.syncEngine.clocks[self.circleID] = vc
-                    self.syncEngine.delegate?.syncEngine(self.syncEngine, didCompleteSyncWith: response.deviceID)
-                } else {
-                    self.pendingArtifactCount[key] = response.artifactCount
+                case .success(.syncResponse(let response)):
+                    print("[GhostNode] Received syncResponse: \(response.artifactCount) artifacts incoming")
+                    if response.artifactCount == 0 {
+                        var vc = self.syncEngine.clock(for: self.circleID)
+                        vc.merge(response.vectorClock)
+                        self.syncEngine.clocks[self.circleID] = vc
+                        self.syncEngine.delegate?.syncEngine(self.syncEngine, didCompleteSyncWith: response.deviceID)
+                    } else {
+                        self.pendingArtifactCount[key] = response.artifactCount
+                    }
+                    self.listenForMessages(on: conn, key: key)
+
+                case .success(.artifactPush(let artifact)):
+                    print("[GhostNode] Received artifact push: \(String(artifact.cid.prefix(8)))…")
+                    self.syncEngine.storeReceivedArtifactPublic(artifact)
+                    let remaining = (self.pendingArtifactCount[key] ?? 1) - 1
+                    self.pendingArtifactCount[key] = remaining
+                    if remaining <= 0 {
+                        self.pendingArtifactCount.removeValue(forKey: key)
+                        self.syncEngine.delegate?.syncEngine(self.syncEngine, didCompleteSyncWith: "peer")
+                    }
+                    self.listenForMessages(on: conn, key: key)
+
+                case .success(.burnNotice(let burn)):
+                    self.syncEngine.handleBurnNotice(burn)
+                    self.listenForMessages(on: conn, key: key)
+
+                case .failure(let error):
+                    print("[GhostNode] Receive failed on \(key): \(error)")
+                    self.syncEngine.delegate?.syncEngine(self.syncEngine, didFailWith: error)
+                    self.connections.removeValue(forKey: key)
+
+                default:
+                    self.listenForMessages(on: conn, key: key)
                 }
-                self.listenForMessages(on: conn, key: key)
-
-            case .success(.artifactPush(let artifact)):
-                print("[GhostNode] Received artifact push: \(String(artifact.cid.prefix(8)))…")
-                self.syncEngine.storeReceivedArtifactPublic(artifact)
-                let remaining = (self.pendingArtifactCount[key] ?? 1) - 1
-                self.pendingArtifactCount[key] = remaining
-                if remaining <= 0 {
-                    self.pendingArtifactCount.removeValue(forKey: key)
-                    self.syncEngine.delegate?.syncEngine(self.syncEngine, didCompleteSyncWith: "peer")
-                }
-                self.listenForMessages(on: conn, key: key)
-
-            case .success(.burnNotice(let burn)):
-                self.syncEngine.handleBurnNotice(burn)
-                self.listenForMessages(on: conn, key: key)
-
-            case .failure(let error):
-                print("[GhostNode] Receive failed on \(key): \(error)")
-                self.syncEngine.delegate?.syncEngine(self.syncEngine, didFailWith: error)
-                self.connections.removeValue(forKey: key)
-
-            default:
-                self.listenForMessages(on: conn, key: key)
             }
         }
     }

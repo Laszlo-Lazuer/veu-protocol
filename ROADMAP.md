@@ -1,6 +1,6 @@
 # Veu Protocol: Development Roadmap & "What's Next"
 
-This document serves as the persistent context for the Veu protocol's development. As of **2026-03-07**, we are in active POC implementation.
+This document serves as the persistent context for the Veu protocol's development. As of **2026-03-10**, we are in active POC implementation.
 
 ## ✅ Completed Foundations
 
@@ -17,9 +17,9 @@ This document serves as the persistent context for the Veu protocol's developmen
 ### POC Layer (Implementation)
 - **Phase 1 — Crypto Core** (`packages/veu-crypto/`): Swift Package implementing AES-256-GCM scramble/unscramble, HMAC-SHA-256 Glaze Seed derivation, Circle Key + Artifact Key management, and Burn Engine. Fully unit tested (`swift test`).
 - **Phase 2 — The Handshake** (`packages/veu-auth/`): Swift Package implementing Dead Link URI generation/parsing (Ed25519 signed), X25519 ECDH key exchange, HKDF-SHA-256 Circle key derivation, SAS 8-digit short-code + Aura color derivation, HandshakeSession orchestrator (7-phase state machine), and SQLite Ledger bootstrap (LEDGER.sql). 61 tests passing (`swift test`).
-- **Phase 3 — The Glaze Engine** (`packages/veu-glaze/`): Swift Package implementing GLSL→Metal shader translation (AURA + EMERALD), MetalRenderer base pipeline with runtime MSL compilation, AuraView + EmeraldView SwiftUI wrappers, Vue Toggle (long-press → biometric → reveal), and HapticEngine (heartbeat/burn/hum). 34 tests passing (`swift test`).
+- **Phase 3 — The Glaze Engine** (`packages/veu-glaze/`): Swift Package implementing GLSL→Metal shader translation (AURA + EMERALD), MetalRenderer base pipeline with runtime MSL compilation, AuraView + EmeraldView SwiftUI wrappers, Vue Toggle (long-press → biometric → reveal) with session-based unlock, and HapticEngine (heartbeat/burn/hum). 34 tests passing (`swift test`).
 - **Phase 4 — Ghost Network** (`packages/veu-ghost/`): Swift Package implementing mDNS/Bonjour peer discovery (LocalPulse), AES-256-GCM encrypted TCP transport (GhostConnection), vector clock delta-sync (SyncEngine), Codable protocol messages (SyncRequest/ArtifactPush/BurnNotice/Ack), and GhostNode coordinator. 44 tests passing (`swift test`).
-- **Phase 6 — On-Device POC Demo** (`apps/VeuDemo/`): Xcode iOS app (generated via XcodeGen) wiring VeuApp into a real-device demo. QR code generation + camera scanner for Dead Link sharing, AVCapturePhotoOutput for photo capture, AppCoordinator `@ObservableObject` driving all state, 4-tab UI (Identity/Handshake/Timeline/Network). Builds for iOS 16+ with Local Network, Camera, and FaceID entitlements.
+- **Phase 6 — On-Device POC Demo** (`apps/VeuDemo/`): Xcode iOS app (generated via XcodeGen) wiring VeuApp into a real-device demo. QR code generation + camera scanner for Dead Link sharing, AVCapturePhotoOutput for photo capture, AppCoordinator `@ObservableObject` driving all state, 5-tab UI (Identity/Handshake/Chat/Timeline/Network). Builds for iOS 16+ with Local Network, Camera, and FaceID entitlements.
 
 ### Phase 2 — The Handshake (`veu-auth`) 🤝
 > _Two devices perform a live Emerald Handshake — the core trust primitive._
@@ -84,7 +84,42 @@ This document serves as the persistent context for the Veu protocol's developmen
 - [x] QR scanner: `AVCaptureMetadataOutput` to scan peer's Dead Link
 - [x] Camera capture: `AVCapturePhotoOutput` for photo artifacts
 - [x] AppCoordinator: centralized `@ObservableObject` driving all view state
-- [x] 4-tab UI: Identity, Handshake, Timeline, Ghost Network
+- [x] 5-tab UI: Identity, Handshake, Chat, Timeline, Ghost Network
+
+### Phase 8 — Timeline Redesign + Persistence + Bug Fixes 🔄
+> _Instagram-style feed with FOMO-driven targeted visibility, persistent state, and camera bug fixes._
+
+- [x] **Bug fixes**
+  - [x] Camera permission: `AVCaptureDevice.requestAccess(for: .video)` before setup
+  - [x] PhotoDelegate retention: stored as instance property to prevent deallocation
+  - [x] Seal error surfacing: `@Published sealError` with `.alert()` in DemoRootView
+  
+- [x] **Persistence layer** (Keychain + SQLite)
+  - [x] `KeychainService`: stores Identity + CircleKey with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
+  - [x] Persistent Ledger: SQLite file in Documents/ with `NSFileProtectionComplete`
+  - [x] `AppState.bootstrap()`: restore identity/keys from Keychain, restore activeCircle from UserDefaults
+  - [x] Circle keys backed by Keychain (persist on add, delete on remove)
+  - [ ] Persistence unit tests (deferred to follow-up PR)
+  
+- [x] **Timeline feed redesign**
+  - [x] Instagram-style full-width vertical scroll (~65% viewport height per card)
+  - [x] Session-based unlock: FaceID once on launch → auto-reveal all content
+  - [x] VueToggle session-aware mode: auto-reveal when `sessionUnlocked=true`
+  - [x] FOMO skeleton: animated Aura + fake callsign for non-recipient targeted posts
+  - [x] Mini-Aura avatar component for sender display
+  - [x] Compose with recipient picker: select specific circle members for targeted posts
+  
+- [x] **Ledger schema v2** (artifacts + circle_members)
+  - [x] `sender_id`, `target_recipients`, `wrapped_keys` columns in artifacts
+  - [x] `circle_members` table for recipient picker
+  - [x] Insert both parties as members on handshake confirm
+  - [x] TimelineEntry model: senderID, senderCallsign, targetRecipients, canReveal
+  
+- [ ] **Ephemeral per-post keys** (deferred to follow-up PR)
+  - [ ] `Scramble.generateEphemeralKey()`, `wrapKey()`, `unwrapKey()`
+  - [ ] Compose with ephemeral key wrapping per recipient
+  - [ ] Reveal with ephemeral key unwrap
+  - [ ] Crypto tests for ephemeral keys
 
 ## 🎯 POC Demo Script
 

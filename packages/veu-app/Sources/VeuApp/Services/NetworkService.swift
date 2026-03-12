@@ -78,6 +78,10 @@ public final class NetworkService {
             throw VeuAppError.noActiveCircle
         }
 
+        // Debug: print circle key hash for verification
+        let keyHash = circleKey.keyData.prefix(8).map { String(format: "%02x", $0) }.joined()
+        print("[NetworkService] Starting with circleID=\(circleID.prefix(8))…, keyHash=\(keyHash)…")
+        
         let node = MeshNode(
             deviceID: appState.identity.deviceID,
             circleID: circleID,

@@ -102,6 +102,57 @@ public final class Ledger {
         }
     }
 
+    // MARK: - Circle Member Operations
+
+    /// Insert a member into a circle.
+    public func insertCircleMember(
+        circleID: String,
+        deviceID: String,
+        publicKeyHex: String,
+        callsign: String
+    ) throws {
+        let sql = """
+            INSERT OR REPLACE INTO circle_members (circle_id, device_id, public_key_hex, callsign)
+            VALUES (?, ?, ?, ?)
+            """
+        try executeWithBindings(sql) { stmt in
+            sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (deviceID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (publicKeyHex as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 4, (callsign as NSString).utf8String, -1, nil)
+        }
+    }
+
+    /// List all members of a circle.
+    public func listCircleMembers(circleID: String) throws -> [(deviceID: String, publicKeyHex: String, callsign: String)] {
+        let sql = "SELECT device_id, public_key_hex, callsign FROM circle_members WHERE circle_id = ? ORDER BY joined_at"
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+
+        var results: [(deviceID: String, publicKeyHex: String, callsign: String)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let deviceID = String(cString: sqlite3_column_text(stmt, 0))
+            let publicKeyHex = String(cString: sqlite3_column_text(stmt, 1))
+            let callsign = String(cString: sqlite3_column_text(stmt, 2))
+            results.append((deviceID: deviceID, publicKeyHex: publicKeyHex, callsign: callsign))
+        }
+        return results
+    }
+
+    /// Remove a member from a circle.
+    public func removeCircleMember(circleID: String, deviceID: String) throws {
+        let sql = "DELETE FROM circle_members WHERE circle_id = ? AND device_id = ?"
+        try executeWithBindings(sql) { stmt in
+            sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 2, (deviceID as NSString).utf8String, -1, nil)
+        }
+    }
+
     // MARK: - Artifact Operations
 
     /// Insert a new artifact record.
@@ -111,6 +162,9 @@ public final class Ledger {
     ///   - circleID: The Circle this artifact belongs to.
     ///   - artifactType: One of `post`, `file`, `message`, `burn_notice`.
     ///   - encryptedMeta: AES-256-GCM encrypted metadata blob.
+    ///   - senderID: Optional device ID of the sender.
+    ///   - targetRecipients: Optional JSON array of target device IDs (nil = everyone).
+    ///   - wrappedKeys: Optional JSON dict of recipient device ID → base64 wrapped key.
     ///   - burnAfter: Optional Unix timestamp for auto-burn scheduling.
     /// - Returns: The SQLite rowid of the inserted artifact.
     @discardableResult
@@ -119,11 +173,14 @@ public final class Ledger {
         circleID: String,
         artifactType: String,
         encryptedMeta: Data,
+        senderID: String? = nil,
+        targetRecipients: String? = nil,
+        wrappedKeys: String? = nil,
         burnAfter: Int? = nil
     ) throws -> Int64 {
         let sql = """
-            INSERT INTO artifacts (cid, circle_id, artifact_type, encrypted_meta, burn_after)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO artifacts (cid, circle_id, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
         var stmtPtr: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
@@ -135,10 +192,29 @@ public final class Ledger {
         sqlite3_bind_text(stmt, 2, (circleID as NSString).utf8String, -1, nil)
         sqlite3_bind_text(stmt, 3, (artifactType as NSString).utf8String, -1, nil)
         sqlite3_bind_blob(stmt, 4, (encryptedMeta as NSData).bytes, Int32(encryptedMeta.count), nil)
-        if let burnAfter = burnAfter {
-            sqlite3_bind_int64(stmt, 5, Int64(burnAfter))
+        
+        if let senderID = senderID {
+            sqlite3_bind_text(stmt, 5, (senderID as NSString).utf8String, -1, nil)
         } else {
             sqlite3_bind_null(stmt, 5)
+        }
+        
+        if let targetRecipients = targetRecipients {
+            sqlite3_bind_text(stmt, 6, (targetRecipients as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(stmt, 6)
+        }
+        
+        if let wrappedKeys = wrappedKeys {
+            sqlite3_bind_text(stmt, 7, (wrappedKeys as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(stmt, 7)
+        }
+        
+        if let burnAfter = burnAfter {
+            sqlite3_bind_int64(stmt, 8, Int64(burnAfter))
+        } else {
+            sqlite3_bind_null(stmt, 8)
         }
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -204,13 +280,25 @@ public final class Ledger {
         }
     }
 
+    /// Artifact details returned from the ledger.
+    public struct ArtifactDetails {
+        public let cid: String
+        public let artifactType: String
+        public let encryptedMeta: Data
+        public let senderID: String?
+        public let targetRecipients: [String]?
+        public let wrappedKeys: [String: String]?
+        public let burnAfter: Int?
+    }
+
     /// Fetch full artifact details for sync.
     ///
     /// - Parameter circleID: The Circle to query.
-    /// - Returns: Tuples of (cid, artifactType, encryptedMeta, burnAfter).
-    public func listArtifactDetails(circleID: String) throws -> [(cid: String, artifactType: String, encryptedMeta: Data, burnAfter: Int?)] {
+    /// - Returns: Array of ArtifactDetails.
+    public func listArtifactDetails(circleID: String) throws -> [ArtifactDetails] {
         let sql = """
-            SELECT cid, artifact_type, encrypted_meta, burn_after FROM artifacts
+            SELECT cid, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after
+            FROM artifacts
             WHERE circle_id = ? AND sync_state != 'purged'
             ORDER BY created_at DESC
             """
@@ -222,15 +310,43 @@ public final class Ledger {
 
         sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
 
-        var results: [(cid: String, artifactType: String, encryptedMeta: Data, burnAfter: Int?)] = []
+        var results: [ArtifactDetails] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let cid = String(cString: sqlite3_column_text(stmt, 0))
             let artifactType = String(cString: sqlite3_column_text(stmt, 1))
             let metaBytes = sqlite3_column_blob(stmt, 2)
             let metaLen = sqlite3_column_bytes(stmt, 2)
             let meta = metaBytes.map { Data(bytes: $0, count: Int(metaLen)) } ?? Data()
-            let burnAfter: Int? = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 3))
-            results.append((cid: cid, artifactType: artifactType, encryptedMeta: meta, burnAfter: burnAfter))
+            
+            let senderID: String? = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 3))
+            
+            var targetRecipients: [String]?
+            if sqlite3_column_type(stmt, 4) != SQLITE_NULL,
+               let text = sqlite3_column_text(stmt, 4),
+               let data = String(cString: text).data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String].self, from: data) {
+                targetRecipients = decoded
+            }
+            
+            var wrappedKeys: [String: String]?
+            if sqlite3_column_type(stmt, 5) != SQLITE_NULL,
+               let text = sqlite3_column_text(stmt, 5),
+               let data = String(cString: text).data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
+                wrappedKeys = decoded
+            }
+            
+            let burnAfter: Int? = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 6))
+            
+            results.append(ArtifactDetails(
+                cid: cid,
+                artifactType: artifactType,
+                encryptedMeta: meta,
+                senderID: senderID,
+                targetRecipients: targetRecipients,
+                wrappedKeys: wrappedKeys,
+                burnAfter: burnAfter
+            ))
         }
         return results
     }
@@ -308,14 +424,14 @@ public final class Ledger {
     // MARK: - Schema SQL
 
     /// The full LEDGER.sql schema, embedded as a Swift string.
-    /// Matches `packages/veu-protocol/LEDGER.sql` exactly.
+    /// v2 adds sender_id, target_recipients, wrapped_keys to artifacts, and circle_members table.
     static let schemaSQL = """
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
 
         CREATE TABLE IF NOT EXISTS ledger_meta (
             id             INTEGER PRIMARY KEY CHECK (id = 1),
-            schema_version INTEGER NOT NULL DEFAULT 1,
+            schema_version INTEGER NOT NULL DEFAULT 2,
             device_id      TEXT    NOT NULL,
             created_at     INTEGER NOT NULL
         );
@@ -327,18 +443,30 @@ public final class Ledger {
             last_active_at INTEGER
         );
 
-        CREATE TABLE IF NOT EXISTS artifacts (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            cid            TEXT    NOT NULL UNIQUE,
+        CREATE TABLE IF NOT EXISTS circle_members (
             circle_id      TEXT    NOT NULL REFERENCES circles(circle_id) ON DELETE CASCADE,
-            artifact_type  TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice')),
-            encrypted_meta BLOB    NOT NULL,
-            sync_state     TEXT    NOT NULL DEFAULT 'pending'
-                                   CHECK (sync_state IN ('pending', 'synced', 'purged')),
-            created_at     INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-            synced_at      INTEGER,
-            purged_at      INTEGER,
-            burn_after     INTEGER
+            device_id      TEXT    NOT NULL,
+            public_key_hex TEXT    NOT NULL,
+            callsign       TEXT    NOT NULL,
+            joined_at      INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (circle_id, device_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS artifacts (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            cid              TEXT    NOT NULL UNIQUE,
+            circle_id        TEXT    NOT NULL REFERENCES circles(circle_id) ON DELETE CASCADE,
+            artifact_type    TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice')),
+            encrypted_meta   BLOB    NOT NULL,
+            sender_id        TEXT,
+            target_recipients TEXT,
+            wrapped_keys     TEXT,
+            sync_state       TEXT    NOT NULL DEFAULT 'pending'
+                                     CHECK (sync_state IN ('pending', 'synced', 'purged')),
+            created_at       INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            synced_at        INTEGER,
+            purged_at        INTEGER,
+            burn_after       INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_artifacts_circle_created
@@ -358,5 +486,8 @@ public final class Ledger {
         CREATE INDEX IF NOT EXISTS idx_artifacts_circle_active
             ON artifacts (circle_id, created_at DESC)
             WHERE sync_state != 'purged';
+
+        CREATE INDEX IF NOT EXISTS idx_circle_members_circle
+            ON circle_members (circle_id);
         """
 }
