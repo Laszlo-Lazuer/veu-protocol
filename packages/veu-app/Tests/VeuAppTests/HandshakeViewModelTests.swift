@@ -5,7 +5,7 @@ import VeuAuth
 final class HandshakeViewModelTests: XCTestCase {
 
     func testInitialState() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = HandshakeViewModel(appState: state)
 
         XCTAssertEqual(vm.phase, .idle)
@@ -17,7 +17,7 @@ final class HandshakeViewModelTests: XCTestCase {
     }
 
     func testInitiateTransitionsToInitiating() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = HandshakeViewModel(appState: state)
 
         try vm.initiate()
@@ -29,7 +29,7 @@ final class HandshakeViewModelTests: XCTestCase {
 
     func testFullHandshakeFlow() throws {
         // Alice initiates
-        let aliceState = try AppState.bootstrap()
+        let aliceState = try AppState.bootstrap(ledgerPath: ":memory:")
         let aliceVM = HandshakeViewModel(appState: aliceState)
         try aliceVM.initiate()
 
@@ -39,7 +39,7 @@ final class HandshakeViewModelTests: XCTestCase {
         }
 
         // Bob responds
-        let bobState = try AppState.bootstrap()
+        let bobState = try AppState.bootstrap(ledgerPath: ":memory:")
         let bobVM = HandshakeViewModel(appState: bobState, circleID: aliceVM.circleID)
         let bobPubKeyData = try bobVM.respond(to: uri)
 
@@ -72,12 +72,12 @@ final class HandshakeViewModelTests: XCTestCase {
     }
 
     func testRejectTransitionsToGhost() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = HandshakeViewModel(appState: state)
         try vm.initiate()
 
         // Simulate getting to verifying state via a full handshake
-        let bobState = try AppState.bootstrap()
+        let bobState = try AppState.bootstrap(ledgerPath: ":memory:")
         let bobVM = HandshakeViewModel(appState: bobState, circleID: vm.circleID)
         let pubKey = try bobVM.respond(to: vm.deadLinkURI!)
         try vm.receiveResponse(remotePublicKeyData: pubKey)
@@ -89,7 +89,7 @@ final class HandshakeViewModelTests: XCTestCase {
     }
 
     func testResetClearsState() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = HandshakeViewModel(appState: state)
         try vm.initiate()
 
@@ -102,7 +102,7 @@ final class HandshakeViewModelTests: XCTestCase {
     }
 
     func testExpireTransitionsToDeadLink() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = HandshakeViewModel(appState: state)
         try vm.initiate()
 

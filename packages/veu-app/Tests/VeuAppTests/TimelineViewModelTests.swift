@@ -7,12 +7,12 @@ final class TimelineViewModelTests: XCTestCase {
 
     private func makeStateWithCircle() throws -> (AppState, String) {
         // Bootstrap two identities and complete a handshake to get a circle
-        let aliceState = try AppState.bootstrap()
+        let aliceState = try AppState.bootstrap(ledgerPath: ":memory:")
         let aliceVM = HandshakeViewModel(appState: aliceState)
         try aliceVM.initiate()
         let uri = aliceVM.deadLinkURI!
 
-        let bobState = try AppState.bootstrap()
+        let bobState = try AppState.bootstrap(ledgerPath: ":memory:")
         let bobVM = HandshakeViewModel(appState: bobState, circleID: aliceVM.circleID)
         let pubKey = try bobVM.respond(to: uri)
         try aliceVM.receiveResponse(remotePublicKeyData: pubKey)
@@ -83,7 +83,7 @@ final class TimelineViewModelTests: XCTestCase {
     }
 
     func testComposeWithoutCircleThrows() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = TimelineViewModel(appState: state)
 
         XCTAssertThrowsError(try vm.compose(data: Data("no circle".utf8))) { error in
@@ -105,7 +105,7 @@ final class TimelineViewModelTests: XCTestCase {
     }
 
     func testReloadWithNoCircleReturnsEmpty() throws {
-        let state = try AppState.bootstrap()
+        let state = try AppState.bootstrap(ledgerPath: ":memory:")
         let vm = TimelineViewModel(appState: state)
         try vm.reload()
         XCTAssertTrue(vm.entries.isEmpty)
