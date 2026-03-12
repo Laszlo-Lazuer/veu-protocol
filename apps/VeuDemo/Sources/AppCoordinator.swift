@@ -33,7 +33,11 @@ final class AppCoordinator: ObservableObject {
     @Published var peerCount = 0
     @Published var networkLog: [String] = []
     @Published var activeTransport: String = "Offline"
-    @Published var relayURL: String = ""
+    @Published var relayURL: String = UserDefaults.standard.string(forKey: "veu.relayURL") ?? "" {
+        didSet {
+            UserDefaults.standard.set(relayURL, forKey: "veu.relayURL")
+        }
+    }
     @Published var sealError: String?
     
     /// Session-based unlock: FaceID once on app launch unlocks all content for the session.
