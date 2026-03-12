@@ -569,7 +569,27 @@ struct DemoTimelineTab: View {
             // Content layer
             Group {
                 if let data = entry.plaintextData,
-                   let uiImage = UIImage(data: data) {
+                   let payload = try? JSONDecoder().decode(PostPayload.self, from: data),
+                   let uiImage = UIImage(data: payload.imageData) {
+                    // Photo with optional caption
+                    VStack(spacing: 0) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(height: payload.caption != nil ? height - 48 : height)
+                            .clipped()
+                        if let caption = payload.caption {
+                            Text(caption)
+                                .font(.subheadline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.systemBackground))
+                        }
+                    }
+                } else if let data = entry.plaintextData,
+                          let uiImage = UIImage(data: data) {
+                    // Raw image (legacy / no caption)
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
@@ -901,7 +921,16 @@ struct CaptureSheet: View {
     }
     
     private func sealContent() {
-        let data = capturedData ?? Data(messageText.utf8)
+        let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let data: Data
+        if let imageData = capturedData {
+            // Photo (with optional caption) — encode as PostPayload
+            let payload = PostPayload(imageData: imageData, caption: caption.isEmpty ? nil : caption)
+            guard let encoded = try? JSONEncoder().encode(payload) else { return }
+            data = encoded
+        } else {
+            data = Data(caption.utf8)
+        }
         guard !data.isEmpty else { return }
         let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
         

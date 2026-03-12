@@ -89,6 +89,11 @@ final class CameraCaptureViewController: UIViewController {
         view.layer.addSublayer(preview)
         previewLayer = preview
 
+        // Ensure capture button stays above the preview layer
+        if let button = captureButton {
+            view.bringSubviewToFront(button)
+        }
+
         captureSession = session
         DispatchQueue.global(qos: .userInitiated).async {
             session.startRunning()
