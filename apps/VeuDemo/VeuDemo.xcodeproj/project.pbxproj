@@ -13,6 +13,7 @@
 		4C6DF7AA427F40E57F6A9855 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34E3966C5F4A4231DE6F1769 /* MultipeerConnectivity.framework */; };
 		5A5E1402DDC0BC55E45F4156 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F3AA7928FFE73127F07721 /* AppCoordinator.swift */; };
 		8D56624AC4BE033DE4D3CAD8 /* VeuApp in Frameworks */ = {isa = PBXBuildFile; productRef = B9E2AA64DA70016AF8EA2575 /* VeuApp */; };
+		A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */; };
 		B0228E5437E38AE54D89E511 /* DemoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 217FD2B80CA48B526D87EFBA /* DemoRootView.swift */; };
 		EAB47BBB10498BEC4B063943 /* VeuDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */; };
 		F1BC7D8AE93E2DD6ABAC3BF2 /* CameraCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */; };
@@ -29,6 +30,7 @@
 		9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeuDemoApp.swift; sourceTree = "<group>"; };
 		9E51303EB4336A9287405B3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D26FF5D58A372992405782B7 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DDEDA00116456D774D67AAB5 /* veu-app */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "veu-app"; path = "../../packages/veu-app"; sourceTree = SOURCE_ROOT; };
 		EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureView.swift; sourceTree = "<group>"; };
 		EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VeuDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -46,6 +48,17 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E5A9B72C3F1D084697C2E0A4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
 		449DF63C8D3D2AF93103BD05 /* Products */ = {
@@ -83,6 +96,7 @@
 		B079BA376C76C9F5568B2811 = {
 			isa = PBXGroup;
 			children = (
+				D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */,
 				49012D2C3C17C29D05ABB609 /* Packages */,
 				891399D3B6A6D799B9F0F389 /* Sources */,
 				B4F0E39EF1E80319535D7FF0 /* Frameworks */,
@@ -107,6 +121,7 @@
 			buildConfigurationList = 55B57DDEFC805467B7EDF546 /* Build configuration list for PBXNativeTarget "VeuDemo" */;
 			buildPhases = (
 				4931EC50B240A16744C70548 /* Sources */,
+				E5A9B72C3F1D084697C2E0A4 /* Resources */,
 				F47113528269B4FAC730B764 /* Frameworks */,
 			);
 			buildRules = (
@@ -184,7 +199,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.6.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
+				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = RELEASE;
 				SWIFT_VERSION = 5.9;
