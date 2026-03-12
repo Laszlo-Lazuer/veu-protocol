@@ -46,6 +46,42 @@ CGO_ENABLED=1 go build -o veu-relay .
 ./veu-relay
 ```
 
+## Deploy to Fly.io (Recommended)
+
+The relay runs on Fly.io's free tier (1 shared VM + 1 GB persistent volume).
+
+```bash
+# Install Fly CLI
+brew install flyctl
+
+# Authenticate
+fly auth login
+
+# Deploy from the relay directory
+cd services/veu-relay
+fly launch --copy-config --yes
+
+# Create persistent volume for SQLite
+fly volumes create veu_data --region iad --size 1
+
+# Deploy
+fly deploy
+
+# Verify
+curl https://veu-relay.fly.dev/health
+# → {"status":"ok","version":"0.1.0"}
+```
+
+Connect from the app using relay URL: `wss://veu-relay.fly.dev/ws`
+
+To add APNs push support later:
+```bash
+fly secrets set VEU_APNS_KEY_PATH=/data/apns-key.p8
+fly secrets set VEU_APNS_KEY_ID=YOUR_KEY_ID
+fly secrets set VEU_APNS_TEAM_ID=YOUR_TEAM_ID
+fly secrets set VEU_APNS_TOPIC=com.veu.app
+```
+
 ## Configuration
 
 All configuration is via environment variables:
