@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 import VeuApp
 import VeuGlaze
 import VeuAuth
@@ -1252,7 +1253,22 @@ struct CaptureSheet: View {
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
-        return resized.jpegData(compressionQuality: 0.7) ?? rawData
+        guard let jpegData = resized.jpegData(compressionQuality: 0.7) else { return rawData }
+        return stripMetadata(from: jpegData) ?? jpegData
+    }
+
+    /// Remove all EXIF/GPS/TIFF metadata from JPEG data for privacy.
+    private func stripMetadata(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let uti = CGImageSourceGetType(source) else { return nil }
+        let mutableData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(mutableData, uti, 1, nil) else { return nil }
+        // Copy pixels but replace all metadata with an empty dictionary
+        CGImageDestinationAddImageFromSource(dest, source, 0, [
+            kCGImageDestinationMetadata: NSDictionary()
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return mutableData as Data
     }
 
     private func formatBytes(_ bytes: Int) -> String {
