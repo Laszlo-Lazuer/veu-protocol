@@ -4,7 +4,7 @@
 // Provides encode (PCM → compressed) and decode (compressed → PCM)
 // plus a jitter buffer for reordering out-of-sequence frames.
 
-#if canImport(AVFoundation)
+#if os(iOS)
 import AVFoundation
 import AudioToolbox
 import Foundation

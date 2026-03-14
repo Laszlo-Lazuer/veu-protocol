@@ -3,7 +3,7 @@
 // Uses AVAudioEngine for mic input and speaker output.
 // Produces 20ms PCM buffers for encoding and accepts decoded PCM for playback.
 
-#if canImport(AVFoundation)
+#if os(iOS)
 import AVFoundation
 import Foundation
 

@@ -4,7 +4,7 @@
 // UI integration, and audio session management tied to CallKit lifecycle.
 // Only used for 1:1 calls — circle voice rooms bypass CallKit.
 
-#if canImport(CallKit)
+#if os(iOS)
 import CallKit
 import AVFoundation
 

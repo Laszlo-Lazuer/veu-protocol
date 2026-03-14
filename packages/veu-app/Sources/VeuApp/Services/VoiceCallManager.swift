@@ -40,7 +40,7 @@ public final class VoiceCallManager: ObservableObject {
     /// Send encrypted audio frame data to the active peer(s).
     public var sendAudioFrame: ((Data) -> Void)?
 
-    #if canImport(AVFoundation)
+    #if os(iOS)
     private let audioEngine = AudioEngine()
     private let codec = AudioCodec()
     private let jitterBuffer = JitterBuffer()
@@ -231,7 +231,7 @@ public final class VoiceCallManager: ObservableObject {
 
     /// Handle a received encrypted audio frame.
     public func handleReceivedAudioFrame(_ frameData: Data) {
-        #if canImport(AVFoundation)
+        #if os(iOS)
         guard frameData.count >= 3 else { return }
 
         // Parse: [2-byte seq][compressed audio]
@@ -295,7 +295,7 @@ public final class VoiceCallManager: ObservableObject {
     }
 
     private func startAudioPipeline() {
-        #if canImport(AVFoundation)
+        #if os(iOS)
         sequenceNumber = 0
         jitterBuffer.reset()
         do {
@@ -311,7 +311,7 @@ public final class VoiceCallManager: ObservableObject {
     }
 
     private func processCapturedAudio(_ pcmData: Data) {
-        #if canImport(AVFoundation)
+        #if os(iOS)
         let compressed = codec.encode(pcmData)
 
         // Frame: [2-byte big-endian seq][compressed audio]
@@ -344,7 +344,7 @@ public final class VoiceCallManager: ObservableObject {
         callStartTime = nil
         callDuration = 0
         sequenceNumber = 0
-        #if canImport(AVFoundation)
+        #if os(iOS)
         audioEngine.stop()
         audioEngine.onCapturedBuffer = nil
         jitterBuffer.reset()

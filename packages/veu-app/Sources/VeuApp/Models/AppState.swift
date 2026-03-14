@@ -89,17 +89,51 @@ public final class AppState {
     }
     
     /// Default path for the persistent ledger database.
+    ///
+    /// Uses an App Group container (`group.com.squirrelyeye.veu`) so the
+    /// database persists across app reinstalls and is shared between
+    /// development (Xcode) and TestFlight builds signed with the same Team ID.
     public static func defaultLedgerPath() -> String {
         #if os(iOS) || os(tvOS) || os(watchOS)
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let appGroupID = "group.com.squirrelyeye.veu"
+        let fm = FileManager.default
+
+        // Prefer App Group container (survives reinstalls)
+        if let groupURL = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            let dbURL = groupURL.appendingPathComponent("veu-ledger.db")
+
+            // Migrate from old Documents location if needed
+            let oldDocumentsURL = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("veu-ledger.db")
+            if fm.fileExists(atPath: oldDocumentsURL.path) && !fm.fileExists(atPath: dbURL.path) {
+                try? fm.moveItem(at: oldDocumentsURL, to: dbURL)
+                // Also migrate WAL and SHM journal files
+                for suffix in ["-wal", "-shm"] {
+                    let oldJournal = oldDocumentsURL.deletingPathExtension()
+                        .appendingPathExtension("db\(suffix)")
+                    let newJournal = dbURL.deletingPathExtension()
+                        .appendingPathExtension("db\(suffix)")
+                    try? fm.moveItem(at: oldJournal, to: newJournal)
+                }
+                print("[AppState] Migrated ledger from Documents to App Group container")
+            }
+
+            // Encryption at rest
+            try? fm.setAttributes(
+                [.protectionKey: FileProtectionType.complete],
+                ofItemAtPath: dbURL.path
+            )
+
+            return dbURL.path
+        }
+
+        // Fallback to Documents if App Group is unavailable
+        let documentsURL = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         let dbURL = documentsURL.appendingPathComponent("veu-ledger.db")
-        
-        // Set NSFileProtectionComplete for encryption at rest
-        try? FileManager.default.setAttributes(
+        try? fm.setAttributes(
             [.protectionKey: FileProtectionType.complete],
             ofItemAtPath: dbURL.path
         )
-        
         return dbURL.path
         #else
         // macOS: use Application Support
