@@ -525,6 +525,7 @@ struct ChatBubble: View {
                         showReactionPicker = false
                         onReaction?(emoji)
                     }
+                    .fixedSize()
                     .offset(y: -44)
                     .transition(.scale.combined(with: .opacity))
                 }
