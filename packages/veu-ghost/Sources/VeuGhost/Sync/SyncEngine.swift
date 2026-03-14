@@ -20,6 +20,14 @@ public protocol SyncEngineDelegate: AnyObject {
 
     /// Called when the sync session encounters an error.
     func syncEngine(_ engine: SyncEngine, didFailWith error: VeuGhostError)
+
+    /// Called when a voice call signal is received from a peer.
+    func syncEngine(_ engine: SyncEngine, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload, from connection: any TransportConnection)
+}
+
+// Default implementations for optional delegate methods
+public extension SyncEngineDelegate {
+    func syncEngine(_ engine: SyncEngine, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload, from connection: any TransportConnection) {}
 }
 
 /// Delta-sync orchestrator for the Ghost Network.
@@ -150,7 +158,8 @@ public final class SyncEngine {
                     encryptedMeta: detail.encryptedMeta,
                     sequence: vc.sequence(for: origin),
                     originDeviceID: origin,
-                    burnAfter: detail.burnAfter
+                    burnAfter: detail.burnAfter,
+                    targetRecipients: detail.targetRecipients
                 )
                 artifactsToPush.append(payload)
             }
@@ -253,6 +262,9 @@ public final class SyncEngine {
                 case .burnNotice(let burn):
                     self.handleBurnNotice(burn)
 
+                case .voiceCall(let payload):
+                    self.delegate?.syncEngine(self, didReceiveVoiceCall: payload, from: connection)
+
                 default:
                     break
                 }
@@ -267,6 +279,10 @@ public final class SyncEngine {
 
     private func storeReceivedArtifact(_ artifact: GhostMessage.ArtifactPushPayload) {
         print("[SyncEngine] Storing artifact \(String(artifact.cid.prefix(8)))… for circle \(String(artifact.circleID.prefix(8)))…")
+        let targetRecipientsJSON: String? = artifact.targetRecipients.flatMap { recipients in
+            guard !recipients.isEmpty else { return nil }
+            return try? String(data: JSONEncoder().encode(recipients), encoding: .utf8)
+        }
         do {
             try ledger.insertArtifact(
                 cid: artifact.cid,
@@ -274,6 +290,7 @@ public final class SyncEngine {
                 artifactType: artifact.artifactType,
                 encryptedMeta: artifact.encryptedMeta,
                 senderID: artifact.originDeviceID,
+                targetRecipients: targetRecipientsJSON,
                 burnAfter: artifact.burnAfter
             )
             try ledger.markSynced(cid: artifact.cid)

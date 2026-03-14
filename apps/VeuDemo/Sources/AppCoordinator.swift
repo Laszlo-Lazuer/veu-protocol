@@ -1,6 +1,8 @@
 import SwiftUI
+import Combine
 import BackgroundTasks
 import LocalAuthentication
+import UserNotifications
 import VeuApp
 import VeuAuth
 import VeuGlaze
@@ -26,6 +28,8 @@ final class AppCoordinator: ObservableObject {
     @Published var auraColorHex: String?
     @Published var timelineEntries: [TimelineEntry] = []
     @Published var chatMessages: [ChatMessage] = []
+    @Published var conversations: [Conversation] = []
+    @Published var activeConversationID: String?
     @Published var networkRunning = false
     @Published var syncedCount = 0
     @Published var networkError: String?
@@ -55,6 +59,20 @@ final class AppCoordinator: ObservableObject {
     /// Members of the active circle (for recipient picker).
     @Published var circleMembers: [CircleMember] = []
 
+    // MARK: - Voice Call State
+    @Published var showCallOverlay = false
+    @Published var showIncomingCall = false
+    @Published var callPeerName: String = ""
+    @Published var callStatusText: String = ""
+    @Published var incomingCallerName: String = ""
+    @Published var isMuted = false
+    @Published var isSpeakerOn = false
+    @Published var isInVoiceRoom = false
+    @Published var activeVoiceRoomID: String?
+    @Published var voiceRoomParticipants: [String] = []
+
+    private var voiceCallManager: VoiceCallManager?
+
     // Proximity handshake state
     @Published var proximityStatus: String = ""
     @Published var proximityDistance: Float?
@@ -68,6 +86,7 @@ final class AppCoordinator: ObservableObject {
     private var timelineVM: TimelineViewModel?
     private var networkService: NetworkService?
     private var proximitySession: ProximitySession?
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Bootstrap
 
@@ -77,6 +96,7 @@ final class AppCoordinator: ObservableObject {
             DispatchQueue.main.async {
                 self.appState = state
             }
+            requestNotificationPermission()
         } catch {
             print("Bootstrap failed: \(error)")
         }
@@ -373,22 +393,22 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - Chat
 
-    func sendMessage(_ text: String) {
+    func sendMessage(_ text: String, recipientDeviceID: String? = nil) {
         guard let state = appState else { return }
         let vm = timelineVM ?? TimelineViewModel(appState: state)
         timelineVM = vm
         do {
-            // Encode message with sender metadata
             let chatPayload = ChatPayload(
                 text: text,
                 sender: state.identity.callsign,
-                timestamp: Date().timeIntervalSince1970
+                timestamp: Date().timeIntervalSince1970,
+                recipientDeviceID: recipientDeviceID
             )
             let data = try JSONEncoder().encode(chatPayload)
-            let result = try vm.compose(data: data, artifactType: "message")
+            let targets: [String]? = recipientDeviceID.map { [$0] }
+            let result = try vm.compose(data: data, artifactType: "message", targetRecipients: targets)
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
-            // Sync to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
                 node.recordLocalArtifact()
             }
@@ -433,8 +453,17 @@ final class AppCoordinator: ObservableObject {
                         sender: "Unknown",
                         timestamp: Date(),
                         isMe: false,
+                        conversationID: state.activeCircleID ?? "unknown",
                         reactions: reactionsByCID[entry.cid] ?? [:]
                     )
+                }
+                // Determine conversation: DM uses peer device ID, circle chat uses circle ID
+                let convID: String
+                if let recipient = payload.recipientDeviceID {
+                    // DM: conversation keyed by the *other* party
+                    convID = payload.sender == myCallsign ? recipient : (entry.senderCallsign ?? payload.sender)
+                } else {
+                    convID = state.activeCircleID ?? "unknown"
                 }
                 return ChatMessage(
                     id: entry.cid,
@@ -442,10 +471,79 @@ final class AppCoordinator: ObservableObject {
                     sender: payload.sender,
                     timestamp: Date(timeIntervalSince1970: payload.timestamp),
                     isMe: payload.sender == myCallsign,
+                    conversationID: convID,
                     reactions: reactionsByCID[entry.cid] ?? [:]
                 )
             }
             .sorted { $0.timestamp < $1.timestamp }
+
+        // Build conversations from messages
+        buildConversations(circleID: state.activeCircleID ?? "unknown", myCallsign: myCallsign)
+    }
+
+    /// Build conversation list from current chatMessages.
+    private func buildConversations(circleID: String, myCallsign: String) {
+        var convMap: [String: Conversation] = [:]
+
+        // Always include circle chat
+        convMap[circleID] = Conversation(
+            id: circleID,
+            type: .circle,
+            lastMessage: nil,
+            lastTimestamp: nil,
+            unreadCount: 0
+        )
+
+        for msg in chatMessages {
+            let convID = msg.conversationID
+            if convMap[convID] == nil {
+                let convType: Conversation.ConversationType
+                if convID == circleID {
+                    convType = .circle
+                } else {
+                    // DM — the convID is the peer's callsign or device ID
+                    convType = .dm(peerDeviceID: convID, peerCallsign: msg.isMe ? convID : msg.sender)
+                }
+                convMap[convID] = Conversation(
+                    id: convID,
+                    type: convType,
+                    lastMessage: nil,
+                    lastTimestamp: nil,
+                    unreadCount: 0
+                )
+            }
+            // Update last message (messages are sorted chronologically)
+            convMap[convID]?.lastMessage = msg.text
+            convMap[convID]?.lastTimestamp = msg.timestamp
+        }
+
+        // Sort: circle first, then DMs by most recent
+        conversations = convMap.values.sorted { a, b in
+            if case .circle = a.type { return true }
+            if case .circle = b.type { return false }
+            return (a.lastTimestamp ?? .distantPast) > (b.lastTimestamp ?? .distantPast)
+        }
+    }
+
+    /// Open an existing DM or create a new (empty) one and navigate to it.
+    func openOrCreateDM(peerDeviceID: String, peerCallsign: String) {
+        if !conversations.contains(where: { $0.id == peerDeviceID }) {
+            let dm = Conversation(
+                id: peerDeviceID,
+                type: .dm(peerDeviceID: peerDeviceID, peerCallsign: peerCallsign),
+                lastMessage: nil,
+                lastTimestamp: nil,
+                unreadCount: 0
+            )
+            conversations.append(dm)
+        }
+        activeConversationID = peerDeviceID
+    }
+
+    /// Messages filtered for the active conversation.
+    var activeConversationMessages: [ChatMessage] {
+        guard let convID = activeConversationID else { return chatMessages }
+        return chatMessages.filter { $0.conversationID == convID }
     }
 
     // MARK: - Reactions
@@ -577,6 +675,7 @@ final class AppCoordinator: ObservableObject {
                 self?.syncedCount += 1
                 self?.networkLog.append("📥 Received artifact \(String(cid.prefix(8)))…")
                 self?.reloadTimeline()
+                self?.notifyIfBackgrounded()
             }
         }
 
@@ -605,6 +704,12 @@ final class AppCoordinator: ObservableObject {
             DispatchQueue.main.async {
                 self?.peerCount = max(0, (self?.peerCount ?? 1) - 1)
                 self?.networkLog.append("👻 Peer disconnected: \(peerID)")
+            }
+        }
+
+        service.onVoiceCallReceived = { [weak self] payload in
+            DispatchQueue.main.async {
+                self?.handleVoiceSignal(payload)
             }
         }
 
@@ -666,6 +771,50 @@ extension AppCoordinator: ProximitySessionDelegate {
         proximityStatus = "Peer disconnected"
     }
 
+    // MARK: - Local Notifications
+
+    /// Request notification permission on first launch.
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                print("[Notifications] Permission error: \(error)")
+            }
+            print("[Notifications] Permission granted: \(granted)")
+        }
+    }
+
+    /// Fire a vague local notification for new activity.
+    /// Intentionally reveals nothing about sender, content, or circle.
+    private func fireVagueNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Veu"
+        content.body = "New activity in your Circle"
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil  // fire immediately
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("[Notifications] Failed to fire: \(error)")
+            }
+        }
+    }
+
+    /// Check if app is in background and fire notification if so.
+    private func notifyIfBackgrounded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            #if os(iOS)
+            if UIApplication.shared.applicationState != .active {
+                self.fireVagueNotification()
+            }
+            #endif
+        }
+    }
+
     // MARK: - Background Tasks
 
     /// Schedule a background sync refresh task.
@@ -676,6 +825,182 @@ extension AppCoordinator: ProximitySessionDelegate {
             try BGTaskScheduler.shared.submit(request)
         } catch {
             print("[BG] Failed to schedule refresh: \(error)")
+        }
+    }
+
+    // MARK: - Voice Calls
+
+    /// Initialize the voice call manager and wire it to the network.
+    func setupVoiceCallManager() {
+        guard let state = appState else { return }
+        let manager = VoiceCallManager()
+        manager.deviceID = state.identity.deviceID
+        manager.callsign = state.identity.callsign
+        if let circleID = state.activeCircleID,
+           let circleKey = state.circleKeys[circleID] {
+            manager.circleKey = circleKey.keyData
+        }
+        manager.sendSignal = { [weak self] payload in
+            self?.sendVoiceSignal(payload)
+        }
+        manager.sendAudioFrame = { [weak self] frame in
+            self?.sendVoiceFrame(frame)
+        }
+        self.voiceCallManager = manager
+
+        // Observe state changes
+        manager.$state.receive(on: DispatchQueue.main).sink { [weak self] callState in
+            self?.updateCallUI(callState)
+        }.store(in: &cancellables)
+    }
+
+    /// Start a 1:1 voice call to a DM conversation peer.
+    func startVoiceCall(conversationID: String) {
+        if voiceCallManager == nil { setupVoiceCallManager() }
+        guard let manager = voiceCallManager else { return }
+
+        if let conv = conversations.first(where: { $0.id == conversationID }),
+           case .dm(let deviceID, let callsign) = conv.type {
+            _ = manager.startCall(to: deviceID)
+            callPeerName = callsign
+            callStatusText = "Ringing…"
+            showCallOverlay = true
+        }
+    }
+
+    /// Toggle voice room for the circle.
+    func toggleVoiceRoom() {
+        if voiceCallManager == nil { setupVoiceCallManager() }
+        guard let manager = voiceCallManager else { return }
+
+        if isInVoiceRoom, let roomID = activeVoiceRoomID {
+            manager.leaveRoom(roomID: roomID)
+        } else if let circleID = appState?.activeCircleID {
+            if let roomID = activeVoiceRoomID {
+                manager.joinRoom(roomID: roomID, circleID: circleID)
+            } else {
+                _ = manager.openRoom(circleID: circleID)
+            }
+        }
+    }
+
+    /// Accept an incoming call.
+    func acceptIncomingCall() {
+        voiceCallManager?.acceptCall()
+        showIncomingCall = false
+    }
+
+    /// Decline an incoming call.
+    func declineIncomingCall() {
+        voiceCallManager?.declineCall()
+        showIncomingCall = false
+    }
+
+    /// End the current call.
+    func endVoiceCall() {
+        voiceCallManager?.endCall()
+    }
+
+    /// Toggle mute.
+    func toggleMute() {
+        isMuted.toggle()
+        voiceCallManager?.isMuted = isMuted
+    }
+
+    /// Toggle speaker.
+    func toggleSpeaker() {
+        isSpeakerOn.toggle()
+        voiceCallManager?.isSpeakerOn = isSpeakerOn
+    }
+
+    /// Handle an incoming voice signal from the Ghost Network.
+    func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
+        if voiceCallManager == nil { setupVoiceCallManager() }
+
+        // Audio frames need decryption before passing to VoiceCallManager
+        if payload.action == .audioFrame, let encryptedData = payload.audioFrameData {
+            guard let appState = appState,
+                  let circleID = appState.activeCircleID,
+                  let circleKey = appState.circleKeys[circleID],
+                  let callID = currentCallID else { return }
+
+            let transport = VoiceFrameTransport(circleKey: circleKey.keyData, callID: callID)
+            guard let decrypted = try? transport.decrypt(frame: encryptedData) else { return }
+
+            // Replace the encrypted audioFrameData with decrypted data
+            var decryptedPayload = payload
+            decryptedPayload.audioFrameData = decrypted
+            voiceCallManager?.handleVoiceSignal(decryptedPayload)
+        } else {
+            voiceCallManager?.handleVoiceSignal(payload)
+        }
+    }
+
+    /// Handle a received encrypted audio frame.
+    func handleReceivedAudioFrame(_ frameData: Data) {
+        voiceCallManager?.handleReceivedAudioFrame(frameData)
+    }
+
+    private func sendVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
+        guard let ghostNode = networkService?.meshNode?.ghostNode else { return }
+        let msg = GhostMessage.voiceCall(payload)
+        ghostNode.broadcastMessage(msg)
+    }
+
+    private func sendVoiceFrame(_ frame: Data) {
+        guard let ghostNode = networkService?.meshNode?.ghostNode else { return }
+        guard let appState = appState,
+              let circleID = appState.activeCircleID,
+              let circleKey = appState.circleKeys[circleID],
+              let callID = currentCallID else { return }
+
+        let transport = VoiceFrameTransport(circleKey: circleKey.keyData, callID: callID)
+        if let encrypted = try? transport.encrypt(frame: frame) {
+            ghostNode.broadcastRawData(encrypted)
+        }
+    }
+
+    private var currentCallID: String? {
+        guard let manager = voiceCallManager else { return nil }
+        switch manager.state {
+        case .active(let callID, _, _): return callID
+        case .inRoom(let roomID, _): return roomID
+        default: return nil
+        }
+    }
+
+    private func updateCallUI(_ callState: VoiceCallState) {
+        switch callState {
+        case .idle:
+            showCallOverlay = false
+            showIncomingCall = false
+            isInVoiceRoom = false
+        case .outgoingRinging(_, let device):
+            callPeerName = conversations.first(where: { $0.id == device })?.displayName ?? device
+            callStatusText = "Ringing…"
+            showCallOverlay = true
+        case .incomingRinging(_, _, let callerCallsign):
+            incomingCallerName = callerCallsign
+            showIncomingCall = true
+        case .active(_, _, let peerCallsign):
+            callPeerName = peerCallsign
+            callStatusText = "Connected"
+            showCallOverlay = true
+            showIncomingCall = false
+            isInVoiceRoom = false
+        case .inRoom(let roomID, let participants):
+            activeVoiceRoomID = roomID
+            voiceRoomParticipants = participants
+            isInVoiceRoom = true
+            showCallOverlay = false
+        case .ended(let reason):
+            callStatusText = reason
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.showCallOverlay = false
+                self?.showIncomingCall = false
+                self?.isInVoiceRoom = false
+                self?.activeVoiceRoomID = nil
+            }
         }
     }
 

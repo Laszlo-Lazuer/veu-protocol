@@ -43,7 +43,7 @@ struct DemoRootView: View {
                 .tag(4)
         }
         .tint(.green)
-        .onChange(of: selectedTab) { newTab in
+        .onChange(of: selectedTab) { _, newTab in
             if newTab == 2 || newTab == 3 {
                 // Entering chat or timeline — prompt FaceID if not already unlocked
                 if !coordinator.sessionUnlocked {
@@ -334,6 +334,7 @@ struct ChatTab: View {
     @ObservedObject var coordinator: AppCoordinator
     @State private var messageText = ""
     @FocusState private var isInputFocused: Bool
+    @State private var showNewDMPicker = false
 
     var body: some View {
         NavigationStack {
@@ -385,78 +386,605 @@ struct ChatTab: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
                     }
+                } else if coordinator.activeConversationID == nil {
+                    // Conversation list
+                    ConversationListView(
+                        appState: appState,
+                        coordinator: coordinator,
+                        showNewDMPicker: $showNewDMPicker
+                    )
                 } else {
-                    VStack(spacing: 0) {
-                        // Messages
-                        ScrollViewReader { proxy in
-                            ScrollView {
-                                LazyVStack(spacing: 8) {
-                                    ForEach(coordinator.chatMessages) { msg in
-                                        ChatBubble(message: msg, myCallsign: appState.identity.callsign) { emoji in
-                                            coordinator.sendReaction(emoji: emoji, targetCID: msg.id)
-                                        }
-                                        .id(msg.id)
-                                    }
-                                }
-                                .padding(.horizontal)
-                                .padding(.top, 8)
-                            }
-                            .scrollDismissesKeyboard(.interactively)
-                            .onChange(of: coordinator.chatMessages.count) { _ in
-                                if let last = coordinator.chatMessages.last {
-                                    withAnimation {
-                                        proxy.scrollTo(last.id, anchor: .bottom)
-                                    }
-                                }
+                    // Active conversation chat
+                    ConversationChatView(
+                        appState: appState,
+                        coordinator: coordinator,
+                        messageText: $messageText,
+                        isInputFocused: $isInputFocused
+                    )
+                }
+            }
+            .navigationTitle(conversationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if coordinator.activeConversationID != nil {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            coordinator.activeConversationID = nil
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text("Chats")
                             }
                         }
-
-                        Divider()
-
-                        // Input bar
-                        HStack(spacing: 12) {
-                            TextField("Message…", text: $messageText, axis: .vertical)
-                                .textFieldStyle(.plain)
-                                .lineLimit(1...4)
-                                .focused($isInputFocused)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color(.systemGray6))
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .toolbar {
-                                    ToolbarItemGroup(placement: .keyboard) {
-                                        Spacer()
-                                        Button("Done") { isInputFocused = false }
-                                    }
-                                }
-
+                    }
+                    // Call button for DMs
+                    if let conv = activeConversation, case .dm = conv.type {
+                        ToolbarItem(placement: .navigationBarTrailing) {
                             Button {
-                                let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                guard !text.isEmpty else { return }
-                                coordinator.sendMessage(text)
-                                messageText = ""
-                                HapticEngine.vueHum()
+                                coordinator.startVoiceCall(conversationID: conv.id)
                             } label: {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.system(size: 32))
-                                    .foregroundColor(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
-                                    .frame(minWidth: 44, minHeight: 44)
-                                    .contentShape(Rectangle())
+                                Image(systemName: "phone.fill")
+                                    .foregroundColor(.green)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color(.systemBackground))
+                    }
+                    // Voice room button for circle chat
+                    if let conv = activeConversation, case .circle = conv.type {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button {
+                                coordinator.toggleVoiceRoom()
+                            } label: {
+                                Image(systemName: coordinator.isInVoiceRoom ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
+                                    .foregroundColor(coordinator.isInVoiceRoom ? .green : .secondary)
+                            }
+                        }
+                    }
+                } else {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button { showNewDMPicker = true } label: {
+                            Image(systemName: "square.and.pencil")
+                                .foregroundColor(.green)
+                        }
                     }
                 }
             }
-            .navigationTitle("Encrypted Chat")
             .onAppear {
                 coordinator.reloadChat()
             }
+            .sheet(isPresented: $showNewDMPicker) {
+                NewDMPickerView(appState: appState, coordinator: coordinator, isPresented: $showNewDMPicker)
+            }
         }
+        .overlay {
+            // Voice call overlay — blocks interaction with chat behind it
+            if coordinator.showCallOverlay {
+                VoiceCallOverlay(coordinator: coordinator)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .onAppear { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+            }
+        }
+        .overlay {
+            // Incoming call sheet
+            if coordinator.showIncomingCall {
+                IncomingCallSheet(coordinator: coordinator)
+                    .transition(.move(edge: .bottom))
+            }
+        }
+    }
+
+    private var conversationTitle: String {
+        guard let convID = coordinator.activeConversationID else { return "Encrypted Chat" }
+        if let conv = activeConversation {
+            switch conv.type {
+            case .circle: return "Circle Chat"
+            case .dm(_, let callsign): return callsign
+            }
+        }
+        return "Chat"
+    }
+
+    private var activeConversation: Conversation? {
+        coordinator.conversations.first { $0.id == coordinator.activeConversationID }
+    }
+}
+
+// MARK: - Conversation List
+
+struct ConversationListView: View {
+    let appState: AppState
+    @ObservedObject var coordinator: AppCoordinator
+    @Binding var showNewDMPicker: Bool
+
+    var body: some View {
+        List {
+            // Voice room banner (if active)
+            if coordinator.activeVoiceRoomID != nil {
+                VoiceRoomBanner(coordinator: coordinator)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            }
+
+            ForEach(coordinator.conversations) { conv in
+                Button {
+                    coordinator.activeConversationID = conv.id
+                } label: {
+                    ConversationRow(conversation: conv)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if coordinator.conversations.count <= 1 {
+                VStack(spacing: 8) {
+                    Text("Start a conversation")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Button {
+                        showNewDMPicker = true
+                    } label: {
+                        Label("New Message", systemImage: "square.and.pencil")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+                .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+    }
+}
+
+struct ConversationRow: View {
+    let conversation: Conversation
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Avatar
+            ZStack {
+                Circle()
+                    .fill(avatarColor)
+                    .frame(width: 44, height: 44)
+                Image(systemName: avatarIcon)
+                    .foregroundColor(.white)
+                    .font(.system(size: 18))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(displayName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    if let ts = conversation.lastTimestamp {
+                        Text(ts, style: .relative)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                if let msg = conversation.lastMessage {
+                    Text(msg)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            if conversation.unreadCount > 0 {
+                Text("\(conversation.unreadCount)")
+                    .font(.caption2.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var displayName: String {
+        switch conversation.type {
+        case .circle: return "Circle Chat"
+        case .dm(_, let callsign): return callsign
+        }
+    }
+
+    private var avatarIcon: String {
+        switch conversation.type {
+        case .circle: return "person.3.fill"
+        case .dm: return "person.fill"
+        }
+    }
+
+    private var avatarColor: Color {
+        switch conversation.type {
+        case .circle: return Color(red: 0.22, green: 0.58, blue: 0.36)
+        case .dm: return Color(red: 0.35, green: 0.55, blue: 0.70)
+        }
+    }
+}
+
+// MARK: - Conversation Chat View
+
+struct ConversationChatView: View {
+    let appState: AppState
+    @ObservedObject var coordinator: AppCoordinator
+    @Binding var messageText: String
+    var isInputFocused: FocusState<Bool>.Binding
+
+    private var recipientDeviceID: String? {
+        guard let convID = coordinator.activeConversationID,
+              let conv = coordinator.conversations.first(where: { $0.id == convID }) else { return nil }
+        if case .dm(let deviceID, _) = conv.type { return deviceID }
+        return nil
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Messages
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(coordinator.activeConversationMessages) { msg in
+                            ChatBubble(message: msg, myCallsign: appState.identity.callsign) { emoji in
+                                coordinator.sendReaction(emoji: emoji, targetCID: msg.id)
+                            }
+                            .id(msg.id)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: coordinator.activeConversationMessages.count) { _, _ in
+                    if let last = coordinator.activeConversationMessages.last {
+                        withAnimation {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            // Input bar
+            HStack(spacing: 12) {
+                TextField("Message…", text: $messageText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .focused(isInputFocused)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done") { isInputFocused.wrappedValue = false }
+                        }
+                    }
+
+                Button {
+                    let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
+                    coordinator.sendMessage(text, recipientDeviceID: recipientDeviceID)
+                    messageText = ""
+                    HapticEngine.vueHum()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(Color(.systemBackground))
+        }
+    }
+}
+
+// MARK: - New DM Picker
+
+struct NewDMPickerView: View {
+    let appState: AppState
+    @ObservedObject var coordinator: AppCoordinator
+    @Binding var isPresented: Bool
+
+    /// Circle members excluding the local user.
+    private var otherMembers: [AppCoordinator.CircleMember] {
+        let myID = appState.identity.deviceID
+        return coordinator.circleMembers.filter { $0.id != myID }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if otherMembers.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.2.slash")
+                            .font(.system(size: 36))
+                            .foregroundColor(.secondary)
+                        Text("No circle members found")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .listRowBackground(Color.clear)
+                } else {
+                    ForEach(otherMembers) { member in
+                        Button {
+                            // Create DM conversation if it doesn't exist yet
+                            coordinator.openOrCreateDM(peerDeviceID: member.id, peerCallsign: member.callsign)
+                            isPresented = false
+                        } label: {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color(red: 0.35, green: 0.55, blue: 0.70))
+                                        .frame(width: 40, height: 40)
+                                    Image(systemName: "person.fill")
+                                        .foregroundColor(.white)
+                                }
+                                Text(member.callsign)
+                                    .font(.system(size: 16, weight: .medium))
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("New Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Voice Room Banner
+
+struct VoiceRoomBanner: View {
+    @ObservedObject var coordinator: AppCoordinator
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .foregroundColor(.green)
+                .font(.system(size: 20))
+                .symbolEffect(.variableColor.iterative)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Voice Room Active")
+                    .font(.subheadline.bold())
+                    .foregroundColor(.white)
+                Text("\(coordinator.voiceRoomParticipants.count) participant\(coordinator.voiceRoomParticipants.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            Spacer()
+            Button {
+                coordinator.toggleVoiceRoom()
+            } label: {
+                Text(coordinator.isInVoiceRoom ? "Leave" : "Join")
+                    .font(.subheadline.bold())
+                    .foregroundColor(coordinator.isInVoiceRoom ? .red : .green)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: 0.15, green: 0.15, blue: 0.17))
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Voice Call Overlay (In-call HUD)
+
+struct VoiceCallOverlay: View {
+    @ObservedObject var coordinator: AppCoordinator
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Top call bar
+            VStack(spacing: 8) {
+                Text(coordinator.callPeerName)
+                    .font(.title2.bold())
+                    .foregroundColor(.white)
+
+                Text(coordinator.callStatusText)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(.top, 60)
+
+            Spacer()
+
+            // Aura circle
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.15))
+                    .frame(width: 160, height: 160)
+                Circle()
+                    .fill(Color.green.opacity(0.25))
+                    .frame(width: 120, height: 120)
+                Image(systemName: "person.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.green)
+            }
+
+            Spacer()
+
+            // Controls
+            HStack(spacing: 40) {
+                CallControlButton(
+                    icon: coordinator.isMuted ? "mic.slash.fill" : "mic.fill",
+                    label: coordinator.isMuted ? "Unmute" : "Mute",
+                    isActive: coordinator.isMuted
+                ) {
+                    coordinator.toggleMute()
+                }
+
+                CallControlButton(
+                    icon: "phone.down.fill",
+                    label: "End",
+                    isDestructive: true
+                ) {
+                    coordinator.endVoiceCall()
+                }
+
+                CallControlButton(
+                    icon: coordinator.isSpeakerOn ? "speaker.wave.3.fill" : "speaker.fill",
+                    label: coordinator.isSpeakerOn ? "Speaker" : "Speaker",
+                    isActive: coordinator.isSpeakerOn
+                ) {
+                    coordinator.toggleSpeaker()
+                }
+            }
+            .padding(.bottom, 60)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.92))
+        .ignoresSafeArea()
+    }
+}
+
+struct CallControlButton: View {
+    let icon: String
+    let label: String
+    var isActive: Bool = false
+    var isDestructive: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(backgroundColor)
+                        .frame(width: 64, height: 64)
+                    Image(systemName: icon)
+                        .font(.system(size: 24))
+                        .foregroundColor(iconColor)
+                }
+                Text(label)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var backgroundColor: Color {
+        if isDestructive { return .red }
+        if isActive { return .white.opacity(0.3) }
+        return .white.opacity(0.12)
+    }
+
+    private var iconColor: Color {
+        if isDestructive { return .white }
+        return .white
+    }
+}
+
+// MARK: - Incoming Call Sheet
+
+struct IncomingCallSheet: View {
+    @ObservedObject var coordinator: AppCoordinator
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 20) {
+                // Caller info
+                ZStack {
+                    Circle()
+                        .fill(Color.green.opacity(0.2))
+                        .frame(width: 100, height: 100)
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.green)
+                }
+                Text(coordinator.incomingCallerName)
+                    .font(.title2.bold())
+                    .foregroundColor(.white)
+                Text("Incoming Encrypted Call")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.7))
+
+                // Accept / Decline
+                HStack(spacing: 60) {
+                    Button {
+                        coordinator.declineIncomingCall()
+                    } label: {
+                        VStack(spacing: 8) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 64, height: 64)
+                                Image(systemName: "phone.down.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                            }
+                            Text("Decline")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        coordinator.acceptIncomingCall()
+                    } label: {
+                        VStack(spacing: 8) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 64, height: 64)
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                            }
+                            Text("Accept")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(32)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(red: 0.12, green: 0.12, blue: 0.14))
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.5))
+        .ignoresSafeArea()
     }
 }
 

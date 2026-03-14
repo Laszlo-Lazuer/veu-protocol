@@ -2,8 +2,8 @@ name: VeuDemo
 options:
   bundleIdPrefix: com.veu.protocol
   deploymentTarget:
-    iOS: "16.0"
-  xcodeVersion: "15.0"
+    iOS: "26.0"
+  xcodeVersion: "26.0"
   createIntermediateGroups: true
 
 packages:

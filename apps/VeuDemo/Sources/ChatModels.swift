@@ -7,6 +7,15 @@ struct ChatPayload: Codable {
     let text: String
     let sender: String
     let timestamp: TimeInterval
+    /// nil = circle broadcast, non-nil = DM to specific device
+    let recipientDeviceID: String?
+
+    init(text: String, sender: String, timestamp: TimeInterval, recipientDeviceID: String? = nil) {
+        self.text = text
+        self.sender = sender
+        self.timestamp = timestamp
+        self.recipientDeviceID = recipientDeviceID
+    }
 }
 
 /// Wire format for timeline posts that combine image data with a caption.
@@ -38,6 +47,7 @@ struct ChatMessage: Identifiable, Equatable {
     let sender: String
     let timestamp: Date
     let isMe: Bool
+    let conversationID: String  // circle ID for group, device ID for DM
     var reactions: [String: [String]]  // emoji → [senders]
 }
 
@@ -49,4 +59,25 @@ struct Comment: Identifiable, Equatable {
     let timestamp: Date
     let isMe: Bool
     var reactions: [String: [String]]
+}
+
+/// Represents a conversation thread (circle chat or 1:1 DM).
+struct Conversation: Identifiable, Equatable {
+    enum ConversationType: Equatable {
+        case circle
+        case dm(peerDeviceID: String, peerCallsign: String)
+    }
+
+    let id: String              // circle ID for group, peer device ID for DM
+    let type: ConversationType
+    var lastMessage: String?
+    var lastTimestamp: Date?
+    var unreadCount: Int
+
+    var displayName: String {
+        switch type {
+        case .circle: return "Circle Chat"
+        case .dm(_, let callsign): return callsign
+        }
+    }
 }

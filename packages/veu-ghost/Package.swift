@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VeuGhost",
     platforms: [
-        .iOS(.v16),
+        .iOS("26.0"),
         .macOS(.v13)
     ],
     products: [
