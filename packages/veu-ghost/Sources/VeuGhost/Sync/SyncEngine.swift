@@ -117,14 +117,30 @@ public final class SyncEngine {
     public func handleSyncRequest(_ request: GhostMessage.SyncRequestPayload, connection: any TransportConnection) {
         let circleID = request.circleID
         let localClock = clock(for: circleID)
-        let delta = localClock.delta(from: request.vectorClock)
 
-        print("[SyncEngine] handleSyncRequest from \(request.deviceID), localClock=\(localClock), peerClock=\(request.vectorClock), delta=\(delta)")
+        print("[SyncEngine] handleSyncRequest from \(request.deviceID), localClock=\(localClock), peerClock=\(request.vectorClock)")
 
         // Collect artifacts to push
         var artifactsToPush: [GhostMessage.ArtifactPushPayload] = []
         if let details = try? ledger.listArtifactDetails(circleID: circleID) {
             print("[SyncEngine] Local artifacts for circle \(String(circleID.prefix(8)))…: \(details.count)")
+            
+            // Ensure the local clock accounts for all existing artifacts.
+            // If an artifact exists but the clock shows sequence 0 for its
+            // origin, bump it to 1 so that the delta protocol can track it.
+            var vc = localClock
+            var clockUpdated = false
+            for detail in details {
+                let origin = detail.senderID ?? deviceID
+                if vc.sequence(for: origin) == 0 {
+                    vc.set(origin, to: 1)
+                    clockUpdated = true
+                }
+            }
+            if clockUpdated {
+                clocks[circleID] = vc
+            }
+            
             for detail in details {
                 let origin = detail.senderID ?? deviceID
                 let payload = GhostMessage.ArtifactPushPayload(
@@ -132,7 +148,7 @@ public final class SyncEngine {
                     circleID: circleID,
                     artifactType: detail.artifactType,
                     encryptedMeta: detail.encryptedMeta,
-                    sequence: localClock.sequence(for: origin),
+                    sequence: vc.sequence(for: origin),
                     originDeviceID: origin,
                     burnAfter: detail.burnAfter
                 )
@@ -140,8 +156,12 @@ public final class SyncEngine {
             }
         }
 
+        // Recalculate delta with the (possibly corrected) clock
+        let effectiveClock = clock(for: circleID)
+        let effectiveDelta = effectiveClock.delta(from: request.vectorClock)
+
         // Filter by delta: only push what the peer is missing
-        let missingFromPeers = Set(delta.keys)
+        let missingFromPeers = Set(effectiveDelta.keys)
         let filtered = missingFromPeers.isEmpty ? artifactsToPush : artifactsToPush.filter { art in
             missingFromPeers.contains(art.originDeviceID)
         }
@@ -151,7 +171,7 @@ public final class SyncEngine {
         let response = GhostMessage.syncResponse(
             GhostMessage.SyncResponsePayload(
                 deviceID: deviceID,
-                vectorClock: localClock,
+                vectorClock: effectiveClock,
                 artifactCount: filtered.count
             )
         )
@@ -166,7 +186,7 @@ public final class SyncEngine {
         }
 
         // Merge the peer's clock into ours
-        var mergedClock = localClock
+        var mergedClock = effectiveClock
         mergedClock.merge(request.vectorClock)
         clocks[circleID] = mergedClock
     }

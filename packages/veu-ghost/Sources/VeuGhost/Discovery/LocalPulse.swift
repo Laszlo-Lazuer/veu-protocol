@@ -228,10 +228,16 @@ public final class LocalPulse: DiscoveryService {
     // MARK: - Private
 
     /// Extract topic prefix from service name (format: "DeviceName~TopicPrefix")
+    /// Handles OS-appended duplicate suffixes like " (2)", " (3)", etc.
     private func extractTopicPrefix(from serviceName: String) -> String? {
         let parts = serviceName.split(separator: "~")
         guard parts.count == 2 else { return nil }
-        return String(parts[1])
+        let raw = String(parts[1])
+        // Strip OS duplicate suffix: "69b0a8d2 (2)" → "69b0a8d2"
+        if let spaceIdx = raw.firstIndex(of: " ") {
+            return String(raw[raw.startIndex..<spaceIdx])
+        }
+        return raw
     }
     
     /// Check if a service name represents our own service (handles OS suffixes like " (2)")
