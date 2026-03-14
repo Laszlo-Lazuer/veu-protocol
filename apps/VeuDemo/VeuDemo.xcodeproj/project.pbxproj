@@ -49,17 +49,6 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
-/* Begin PBXResourcesBuildPhase section */
-		E5A9B72C3F1D084697C2E0A4 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
-
 /* Begin PBXGroup section */
 		449DF63C8D3D2AF93103BD05 /* Products */ = {
 			isa = PBXGroup;
@@ -167,6 +156,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		E5A9B72C3F1D084697C2E0A4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		4931EC50B240A16744C70548 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -198,7 +198,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = RELEASE;
@@ -221,7 +221,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.7.0;
+				MARKETING_VERSION = 0.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG DEV_MODE";
