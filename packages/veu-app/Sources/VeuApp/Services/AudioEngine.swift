@@ -58,9 +58,6 @@ public final class AudioEngine {
             try inputNode.setVoiceProcessingEnabled(true)
         }
 
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        print("[AudioEngine] Input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)")
-
         // Connect player → main mixer for playback
         let mixerFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -70,8 +67,13 @@ public final class AudioEngine {
         )!
         engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
 
-        // Install tap on input for capture
-        let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
+        // Start engine first — VP changes the audio graph,
+        // the tap format is only valid after the engine is running.
+        try engine.start()
+
+        // Read format AFTER engine start so VP has configured the graph
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        print("[AudioEngine] Input format after start: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)")
 
         // Create reusable converter if input format differs from our target
         if inputFormat.sampleRate != Self.sampleRate ||
@@ -82,11 +84,13 @@ public final class AudioEngine {
             self.converter = nil
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
+        // Install tap with nil format — let the system deliver in its native format
+        // (required for voice processing compatibility)
+        let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             self?.handleCapturedBuffer(buffer)
         }
 
-        try engine.start()
         playerNode.play()
         playerNode.volume = 1.0
         engine.mainMixerNode.outputVolume = 1.0
@@ -148,7 +152,7 @@ public final class AudioEngine {
             } else {
                 let inputFormat = engine.inputNode.outputFormat(forBus: 0)
                 let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
-                engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
+                engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
                     self?.handleCapturedBuffer(buffer)
                 }
             }
@@ -167,19 +171,35 @@ public final class AudioEngine {
     private func handleCapturedBuffer(_ buffer: AVAudioPCMBuffer) {
         tapCallCount += 1
         if tapCallCount <= 3 || tapCallCount % 500 == 0 {
-            print("[AudioEngine] 🎤 Tap fired #\(tapCallCount): \(buffer.frameLength) frames")
+            print("[AudioEngine] 🎤 Tap fired #\(tapCallCount): \(buffer.frameLength) frames, fmt=\(buffer.format.sampleRate)Hz/\(buffer.format.channelCount)ch/\(buffer.format.commonFormat.rawValue)")
         }
-        guard let converter = self.converter else {
+
+        // If the tap delivers in our exact target format (Int16/48k/mono), skip conversion
+        if buffer.format.commonFormat == .pcmFormatInt16 &&
+           buffer.format.sampleRate == Self.sampleRate &&
+           buffer.format.channelCount == Self.channels {
             extractAndDeliver(buffer)
             return
         }
 
-        let ratio = Self.sampleRate / converter.inputFormat.sampleRate
+        // Lazily create/recreate converter if tap format doesn't match what we expected
+        if converter == nil || converter!.inputFormat != buffer.format {
+            converter = AVAudioConverter(from: buffer.format, to: captureFormat)
+        }
+        guard let converter = self.converter else { return }
+
+        let ratio = Self.sampleRate / buffer.format.sampleRate
         let targetFrameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: targetFrameCount) else { return }
 
         var error: NSError?
+        var consumed = false
         let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            if consumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
             outStatus.pointee = .haveData
             return buffer
         }
@@ -188,7 +208,9 @@ public final class AudioEngine {
         if error == nil, outputBuffer.frameLength > 0 {
             extractAndDeliver(outputBuffer)
         } else if let error = error {
-            print("[AudioEngine] ⚠️ Converter error: \(error)")
+            if tapCallCount <= 5 {
+                print("[AudioEngine] ⚠️ Converter error: \(error)")
+            }
         }
     }
 
