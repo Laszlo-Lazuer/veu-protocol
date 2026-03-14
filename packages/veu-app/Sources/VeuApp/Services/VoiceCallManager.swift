@@ -49,6 +49,8 @@ public final class VoiceCallManager: ObservableObject {
     private var ringTimer: Timer?
     private var durationTimer: Timer?
     private var callStartTime: Date?
+    /// Tracks recently seen signaling messages to deduplicate relay echoes.
+    private var seenSignals: Set<String> = []
 
     private static let ringTimeout: TimeInterval = 30
 
@@ -77,10 +79,11 @@ public final class VoiceCallManager: ObservableObject {
     /// Handle an incoming call offer from a peer.
     public func handleIncomingOffer(_ payload: GhostMessage.VoiceCallPayload) {
         guard case .idle = state else {
-            // Busy — reject
+            print("[VoiceCall] ⚠️ Rejecting offer — busy (state: \(state))")
             rejectCall(callID: payload.callID, recipientDeviceID: payload.senderDeviceID)
             return
         }
+        print("[VoiceCall] 📞 Incoming call from \(payload.senderCallsign) (\(payload.senderDeviceID.prefix(8)))")
         state = .incomingRinging(
             callID: payload.callID,
             callerDevice: payload.senderDeviceID,
@@ -117,12 +120,21 @@ public final class VoiceCallManager: ObservableObject {
 
     /// Handle a call answer from the remote peer.
     public func handleAnswer(_ payload: GhostMessage.VoiceCallPayload) {
-        guard case .outgoingRinging(let callID, _) = state, payload.callID == callID else { return }
+        guard case .outgoingRinging(let callID, _) = state else {
+            print("[VoiceCall] ⚠️ Ignoring answer — not in outgoingRinging state (current: \(state))")
+            return
+        }
+        guard payload.callID == callID else {
+            print("[VoiceCall] ⚠️ Ignoring answer — callID mismatch (expected: \(callID.prefix(8)), got: \(payload.callID.prefix(8)))")
+            return
+        }
         cancelRingTimer()
 
         if payload.accepted == true {
+            print("[VoiceCall] ✅ Call answered by \(payload.senderCallsign)")
             transitionToActive(callID: callID, peerDevice: payload.senderDeviceID, peerCallsign: payload.senderCallsign)
         } else {
+            print("[VoiceCall] ❌ Call declined by peer")
             endCallCleanup(reason: "Declined by peer")
         }
     }
@@ -162,6 +174,19 @@ public final class VoiceCallManager: ObservableObject {
 
     /// Handle a remote end signal.
     public func handleEnd(_ payload: GhostMessage.VoiceCallPayload) {
+        // Only end if the signal matches our active call
+        let currentCallID: String?
+        switch state {
+        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+            currentCallID = id
+        default:
+            currentCallID = nil
+        }
+        guard let current = currentCallID, payload.callID == current else {
+            print("[VoiceCall] ⚠️ Ignoring end signal — callID mismatch or idle")
+            return
+        }
+        print("[VoiceCall] 📴 Peer ended call: \(payload.reason ?? "no reason")")
         endCallCleanup(reason: payload.reason ?? "Peer ended")
     }
 
@@ -254,7 +279,22 @@ public final class VoiceCallManager: ObservableObject {
     /// Route an incoming voice call payload to the appropriate handler.
     public func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
         // Ignore our own messages echoed back from relay/broadcast
-        guard payload.senderDeviceID != deviceID else { return }
+        guard payload.senderDeviceID != deviceID else {
+            if payload.action != .audioFrame {
+                print("[VoiceCall] ↩️ Ignoring self-echo: \(payload.action)")
+            }
+            return
+        }
+
+        // Deduplicate signaling messages (relay + LAN can deliver the same signal)
+        if payload.action != .audioFrame {
+            let key = "\(payload.callID):\(payload.action):\(payload.senderDeviceID)"
+            guard !seenSignals.contains(key) else {
+                print("[VoiceCall] 🔁 Ignoring duplicate signal: \(payload.action)")
+                return
+            }
+            seenSignals.insert(key)
+        }
 
         // Handle audio frames on background queue for low latency
         if payload.action == .audioFrame {
@@ -341,12 +381,14 @@ public final class VoiceCallManager: ObservableObject {
     }
 
     private func endCallCleanup(reason: String) {
+        print("[VoiceCall] 🧹 Cleanup: \(reason)")
         cancelRingTimer()
         durationTimer?.invalidate()
         durationTimer = nil
         callStartTime = nil
         callDuration = 0
         sequenceNumber = 0
+        seenSignals.removeAll()
         #if os(iOS)
         audioEngine.stop()
         audioEngine.onCapturedBuffer = nil
