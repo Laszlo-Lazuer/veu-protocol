@@ -1514,16 +1514,22 @@ struct FullscreenImageViewer: View {
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
     @State private var saved = false
+    @State private var dragOffset: CGFloat = 0
+
+    private var dismissProgress: CGFloat {
+        min(abs(dragOffset) / 200, 1.0)
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
+                .opacity(1.0 - dismissProgress * 0.5)
 
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
                 .scaleEffect(scale)
-                .offset(offset)
+                .offset(x: offset.width, y: offset.height + (scale <= 1.0 ? dragOffset : 0))
                 .gesture(
                     MagnificationGesture()
                         .onChanged { value in
@@ -1546,10 +1552,20 @@ struct FullscreenImageViewer: View {
                                     width: lastOffset.width + value.translation.width,
                                     height: lastOffset.height + value.translation.height
                                 )
+                            } else {
+                                dragOffset = value.translation.height
                             }
                         }
                         .onEnded { value in
-                            lastOffset = offset
+                            if scale > 1.0 {
+                                lastOffset = offset
+                            } else {
+                                if abs(dragOffset) > 120 {
+                                    onDismiss()
+                                } else {
+                                    withAnimation(.spring(response: 0.3)) { dragOffset = 0 }
+                                }
+                            }
                         }
                 )
                 .onTapGesture(count: 2) {
