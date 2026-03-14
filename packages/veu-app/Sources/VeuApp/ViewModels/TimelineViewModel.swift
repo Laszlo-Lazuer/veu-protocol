@@ -25,6 +25,8 @@ public struct TimelineEntry: Equatable {
     public var isTargeted: Bool { targetRecipients != nil && targetRecipients?.isEmpty == false }
     /// Whether the current user can view this content.
     public let canReveal: Bool
+    /// When the artifact was created (Unix epoch seconds).
+    public let createdAt: Date?
 
     public static func == (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
         lhs.cid == rhs.cid
@@ -118,7 +120,8 @@ public final class TimelineViewModel {
                 senderID: detail.senderID,
                 senderCallsign: senderCallsign,
                 targetRecipients: detail.targetRecipients,
-                canReveal: canReveal
+                canReveal: canReveal,
+                createdAt: detail.createdAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
             )
         }
     }

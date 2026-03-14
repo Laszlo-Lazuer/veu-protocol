@@ -343,6 +343,7 @@ public final class Ledger {
         public let targetRecipients: [String]?
         public let wrappedKeys: [String: String]?
         public let burnAfter: Int?
+        public let createdAt: Int?
     }
 
     /// Fetch full artifact details for sync.
@@ -351,7 +352,7 @@ public final class Ledger {
     /// - Returns: Array of ArtifactDetails.
     public func listArtifactDetails(circleID: String) throws -> [ArtifactDetails] {
         let sql = """
-            SELECT cid, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after
+            SELECT cid, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after, created_at
             FROM artifacts
             WHERE circle_id = ? AND sync_state != 'purged'
             ORDER BY created_at DESC
@@ -391,6 +392,7 @@ public final class Ledger {
             }
             
             let burnAfter: Int? = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 6))
+            let createdAt: Int? = sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 7))
             
             results.append(ArtifactDetails(
                 cid: cid,
@@ -399,7 +401,8 @@ public final class Ledger {
                 senderID: senderID,
                 targetRecipients: targetRecipients,
                 wrappedKeys: wrappedKeys,
-                burnAfter: burnAfter
+                burnAfter: burnAfter,
+                createdAt: createdAt
             ))
         }
         return results

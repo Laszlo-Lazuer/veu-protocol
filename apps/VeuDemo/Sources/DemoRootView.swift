@@ -723,7 +723,7 @@ struct DemoTimelineTab: View {
     
     @ViewBuilder
     private func revealableCard(entry: TimelineEntry, height: CGFloat, seedColor: SIMD3<Float>) -> some View {
-        ZStack(alignment: .topLeading) {
+        ZStack {
             // Content layer
             Group {
                 if let data = entry.plaintextData,
@@ -772,22 +772,43 @@ struct DemoTimelineTab: View {
             }
             .frame(height: height)
             
-            // Sender info pill
-            if let callsign = entry.senderCallsign {
-                HStack(spacing: 6) {
-                    AuraView(seedColor: seedColor, pulse: 0.0)
-                        .frame(width: 24, height: 24)
-                        .clipShape(Circle())
-                    
-                    Text(callsign)
-                        .font(.caption2.bold())
-                        .foregroundColor(.white)
+            // Sender avatar + name — top left
+            VStack {
+                HStack {
+                    if let callsign = entry.senderCallsign {
+                        HStack(spacing: 6) {
+                            AuraView(seedColor: seedColor, pulse: 0.15)
+                                .frame(width: 28, height: 28)
+                                .clipShape(Circle())
+                            Text(callsign)
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial.opacity(0.8))
+                        .clipShape(Capsule())
+                        .padding(10)
+                    }
+                    Spacer()
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
-                .padding(10)
+                Spacer()
+                // Timestamp — bottom right
+                HStack {
+                    Spacer()
+                    if let date = entry.createdAt {
+                        Text(date, style: .relative)
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.ultraThinMaterial.opacity(0.7))
+                            .clipShape(Capsule())
+                            .padding(10)
+                    }
+                }
             }
         }
         .frame(height: height)
