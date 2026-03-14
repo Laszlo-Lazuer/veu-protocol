@@ -259,18 +259,10 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         guard frameData.count >= 3 else { return }
 
-        // Parse: [2-byte seq][compressed audio]
-        let seq = frameData.withUnsafeBytes { ptr -> UInt16 in
-            ptr.load(fromByteOffset: 0, as: UInt16.self).bigEndian
-        }
+        // Parse: [2-byte seq][compressed audio] — skip seq (TCP delivers in order)
         let compressedAudio = frameData.subdata(in: 2..<frameData.count)
         let pcmData = codec.decode(compressedAudio)
-        jitterBuffer.insert(sequence: seq, data: pcmData)
-
-        // Drain jitter buffer
-        while let frame = jitterBuffer.pull() {
-            audioEngine.playBuffer(frame)
-        }
+        audioEngine.playBuffer(pcmData)
         #endif
     }
 

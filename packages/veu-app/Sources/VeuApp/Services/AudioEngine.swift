@@ -118,13 +118,14 @@ public final class AudioEngine {
 
         buffer.frameLength = frameCount
 
-        // Convert Int16 → Float32 with gain boost for µ-law's limited dynamic range
+        // Convert Int16 → Float32 with slight gain boost
         pcmData.withUnsafeBytes { rawPtr in
             guard let int16Ptr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
             guard let floatData = buffer.floatChannelData?[0] else { return }
-            let gain: Float = 2.0
+            let gain: Float = 1.5
             for i in 0..<Int(frameCount) {
-                floatData[i] = (Float(int16Ptr[i]) / 32768.0) * gain
+                let sample = (Float(int16Ptr[i]) / 32768.0) * gain
+                floatData[i] = min(max(sample, -1.0), 1.0) // clamp to prevent distortion
             }
         }
 
@@ -156,25 +157,20 @@ public final class AudioEngine {
 
     private func handleCapturedBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let converter = self.converter else {
-            // Already in target format
             extractAndDeliver(buffer)
             return
         }
 
-        let targetFrameCount = AVAudioFrameCount(Self.framesPerBuffer)
+        let ratio = Self.sampleRate / converter.inputFormat.sampleRate
+        let targetFrameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: targetFrameCount) else { return }
 
         var error: NSError?
-        var consumed = false
-        converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-            if consumed {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            consumed = true
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
             outStatus.pointee = .haveData
             return buffer
         }
+        converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
 
         if error == nil, outputBuffer.frameLength > 0 {
             extractAndDeliver(outputBuffer)
