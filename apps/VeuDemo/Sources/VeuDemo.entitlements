@@ -4,9 +4,7 @@
 <dict>
 	<key>aps-environment</key>
 	<string>development</string>
-	<!-- Uncomment after Apple approves the Multicast Networking entitlement request
 	<key>com.apple.developer.networking.multicast</key>
 	<true/>
-	-->
 </dict>
 </plist>
