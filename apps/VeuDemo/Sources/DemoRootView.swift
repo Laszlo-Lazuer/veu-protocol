@@ -1034,8 +1034,10 @@ struct CaptureSheet: View {
                         .cornerRadius(12)
                     }
 
-                    if capturedData != nil {
-                        Label("Photo captured (\(capturedData!.count) bytes)", systemImage: "checkmark.circle.fill")
+                    if let raw = capturedData {
+                        let compressed = compressForSending(raw)
+                        Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(compressed.count))",
+                              systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                     }
 
@@ -1209,6 +1211,15 @@ struct CaptureSheet: View {
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
         return resized.jpegData(compressionQuality: 0.7) ?? rawData
+    }
+
+    private func formatBytes(_ bytes: Int) -> String {
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        } else if bytes >= 1024 {
+            return String(format: "%.0f KB", Double(bytes) / 1024)
+        }
+        return "\(bytes) B"
     }
 
     private func sealContent() {
