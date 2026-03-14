@@ -482,9 +482,16 @@ struct ChatBubble: View {
                     .padding(.vertical, 8)
                     .foregroundColor(message.isMe ? .white : .primary)
                     .background(
-                        BubbleView(isSent: message.isMe, cornerRadius: 18)
+                        message.isMe
+                            ? Color(red: 0.22, green: 0.58, blue: 0.36)
+                            : Color(.systemGray5)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .background(
+                        BubbleView(isSent: message.isMe, cornerRadius: 18)
+                            .padding(-8)
+                            .allowsHitTesting(false)
+                    )
                     .onLongPressGesture(minimumDuration: 0.3) {
                         showReactionPicker = true
                         HapticEngine.vueHum()

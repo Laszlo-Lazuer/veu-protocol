@@ -1,15 +1,17 @@
-// BubbleShader.swift — Metal Shader for Animated Chat Bubbles
+// BubbleShader.swift — Metal Shader for Chat Bubble Vapor Glow
 //
-// A subtle, flowing gradient shader for chat message bubbles.  Uses FBM
-// noise (like the Aura shader) but at lower intensity and slower speed
-// to serve as a background texture rather than a focal element.
+// Renders a soft, animated vapor glow around the outside edge of a chat
+// bubble.  The bubble interior is left transparent so SwiftUI can render
+// a clean solid-color background behind the text.  The glow is a subtle
+// FBM-noise-modulated bloom that breathes slowly — like warm breath on
+// cold glass.
 //
-// Two modes: "sent" (emerald-tinted) and "received" (ghost-white).
+// Two modes: "sent" (emerald vapor) and "received" (cool silver vapor).
 
 import Foundation
 import simd
 
-/// Uniform buffer layout for the Bubble shader.
+/// Uniform buffer layout for the Bubble glow shader.
 ///
 /// Must match the `BubbleUniforms` struct in the MSL source exactly.
 public struct BubbleUniforms {
@@ -31,7 +33,7 @@ public struct BubbleUniforms {
     }
 }
 
-/// Embedded Metal Shading Language source for the Bubble shader.
+/// Embedded Metal Shading Language source for the Bubble glow shader.
 public enum BubbleShader {
 
     /// The vertex function name in the compiled Metal library.
@@ -57,7 +59,6 @@ public enum BubbleShader {
         float  cornerRadius;
     };
 
-    // Fullscreen triangle (no vertex buffer needed)
     vertex VertexOut bubbleQuadVertex(uint vid [[vertex_id]]) {
         VertexOut out;
         out.uv = float2((vid << 1) & 2, vid & 2);
@@ -92,7 +93,7 @@ public enum BubbleShader {
         float amp   = 0.5;
         float freq  = 1.0;
         float total = 0.0;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 3; i++) {
             v     += amp * bubble_valueNoise(p * freq);
             total += amp;
             freq  *= 2.0;
@@ -101,7 +102,7 @@ public enum BubbleShader {
         return v / total;
     }
 
-    // Rounded rectangle SDF
+    // Rounded rectangle signed distance field
     float roundedRectSDF(float2 p, float2 size, float radius) {
         float2 d = abs(p) - size + radius;
         return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - radius;
@@ -112,48 +113,48 @@ public enum BubbleShader {
     fragment float4 bubbleFragment(VertexOut in [[stage_in]],
                                     constant BubbleUniforms &u [[buffer(0)]]) {
         float2 fragCoord = float2(in.uv.x * u.resolution.x, in.uv.y * u.resolution.y);
-        float2 uv = fragCoord / u.resolution;
-
-        // Slow time for subtle motion
-        float t = u.time * 0.08;
-
-        // Two-pass FBM for organic flow
-        float2 q = float2(
-            bubble_fbm(uv * 3.0 + float2(0.0, t)),
-            bubble_fbm(uv * 3.0 + float2(1.7, t * 0.8))
-        );
-
-        float noise = bubble_fbm(uv * 2.5 + q * 0.4);
-
-        // Color palettes
-        // Sent: emerald gradient (dark → light)
-        float3 sentDark  = float3(0.220, 0.580, 0.360);
-        float3 sentLight = float3(0.340, 0.820, 0.500);
-
-        // Received: ghost-white with subtle cool tones
-        float3 recvDark  = float3(0.180, 0.185, 0.200);
-        float3 recvLight = float3(0.240, 0.245, 0.260);
-
-        float3 dark  = mix(recvDark,  sentDark,  u.isSent);
-        float3 light = mix(recvLight, sentLight, u.isSent);
-
-        // Blend noise into gradient
-        float gradient = mix(0.35, 0.65, uv.y) + noise * 0.15;
-        float3 color = mix(dark, light, gradient);
-
-        // Subtle shimmer highlight
-        float shimmer = bubble_fbm(uv * 6.0 + float2(t * 1.5, t * 0.6));
-        float shimmerMask = smoothstep(0.55, 0.75, shimmer);
-        float shimmerIntensity = mix(0.04, 0.08, u.isSent);
-        color += shimmerIntensity * shimmerMask;
-
-        // Rounded rectangle mask
         float2 center = fragCoord - u.resolution * 0.5;
         float2 halfSize = u.resolution * 0.5;
-        float dist = roundedRectSDF(center, halfSize, u.cornerRadius);
-        float alpha = 1.0 - smoothstep(-1.0, 0.5, dist);
 
-        return float4(color * alpha, alpha);
+        // Signed distance from rounded rect edge (negative = inside, positive = outside)
+        float dist = roundedRectSDF(center, halfSize, u.cornerRadius);
+
+        // Only render the glow halo (outside the bubble)
+        // Pixels inside the bubble are fully transparent.
+        if (dist < -0.5) {
+            return float4(0.0);
+        }
+
+        float t = u.time * 0.1;
+
+        // Normalized position for noise sampling
+        float2 uv = fragCoord / u.resolution;
+
+        // Animate noise along the bubble edge
+        float edgeNoise = bubble_fbm(uv * 4.0 + float2(t, t * 0.7));
+
+        // Breathing intensity
+        float breathe = 0.7 + 0.3 * sin(u.time * 0.4);
+
+        // Glow falloff: exponential decay from edge outward
+        // glowWidth controls how far the vapor extends (in pixels)
+        float glowWidth = 12.0 + edgeNoise * 6.0;
+        float glow = exp(-dist * dist / (glowWidth * glowWidth)) * breathe;
+
+        // Sent: emerald vapor
+        float3 sentColor = float3(0.314, 0.784, 0.471);
+        // Received: cool silver
+        float3 recvColor = float3(0.65, 0.68, 0.72);
+
+        float3 glowColor = mix(recvColor, sentColor, u.isSent);
+
+        // Subtle color variation along edge
+        float hueShift = edgeNoise * 0.15;
+        glowColor = glowColor + hueShift * float3(-0.05, 0.08, -0.03);
+
+        float alpha = glow * mix(0.25, 0.4, u.isSent);
+
+        return float4(glowColor * alpha, alpha);
     }
     """
 }
