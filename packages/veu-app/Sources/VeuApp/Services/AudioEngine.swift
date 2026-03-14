@@ -12,6 +12,7 @@ public final class AudioEngine {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private let captureFormat: AVAudioFormat
+    private var converter: AVAudioConverter?
     private var isRunning = false
 
     /// Called with each captured 20ms PCM buffer (mono Int16, 48kHz).
@@ -64,12 +65,24 @@ public final class AudioEngine {
 
         // Install tap on input for capture
         let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
+
+        // Create reusable converter if input format differs from our target
+        if inputFormat.sampleRate != Self.sampleRate ||
+           inputFormat.channelCount != Self.channels ||
+           inputFormat.commonFormat != .pcmFormatInt16 {
+            self.converter = AVAudioConverter(from: inputFormat, to: captureFormat)
+        } else {
+            self.converter = nil
+        }
+
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
-            self?.handleCapturedBuffer(buffer, inputFormat: inputFormat)
+            self?.handleCapturedBuffer(buffer)
         }
 
         try engine.start()
         playerNode.play()
+        playerNode.volume = 1.0
+        engine.mainMixerNode.outputVolume = 1.0
 
         self.engine = engine
         self.playerNode = playerNode
@@ -105,12 +118,13 @@ public final class AudioEngine {
 
         buffer.frameLength = frameCount
 
-        // Convert Int16 → Float32
+        // Convert Int16 → Float32 with gain boost for µ-law's limited dynamic range
         pcmData.withUnsafeBytes { rawPtr in
             guard let int16Ptr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
             guard let floatData = buffer.floatChannelData?[0] else { return }
+            let gain: Float = 2.0
             for i in 0..<Int(frameCount) {
-                floatData[i] = Float(int16Ptr[i]) / 32768.0
+                floatData[i] = (Float(int16Ptr[i]) / 32768.0) * gain
             }
         }
 
@@ -127,7 +141,7 @@ public final class AudioEngine {
                 let inputFormat = engine.inputNode.outputFormat(forBus: 0)
                 let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
                 engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
-                    self?.handleCapturedBuffer(buffer, inputFormat: inputFormat)
+                    self?.handleCapturedBuffer(buffer)
                 }
             }
         }
@@ -140,10 +154,9 @@ public final class AudioEngine {
 
     // MARK: - Private
 
-    private func handleCapturedBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
-        // Convert to our standard format (mono Int16 48kHz) if needed
-        guard let converter = AVAudioConverter(from: inputFormat, to: captureFormat) else {
-            // Already in target format — extract raw bytes
+    private func handleCapturedBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard let converter = self.converter else {
+            // Already in target format
             extractAndDeliver(buffer)
             return
         }
@@ -152,12 +165,18 @@ public final class AudioEngine {
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: targetFrameCount) else { return }
 
         var error: NSError?
+        var consumed = false
         converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+            if consumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            consumed = true
             outStatus.pointee = .haveData
             return buffer
         }
 
-        if error == nil {
+        if error == nil, outputBuffer.frameLength > 0 {
             extractAndDeliver(outputBuffer)
         }
     }

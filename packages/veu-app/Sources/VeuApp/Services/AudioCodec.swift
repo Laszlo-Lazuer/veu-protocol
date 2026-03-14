@@ -109,8 +109,8 @@ public final class JitterBuffer {
     private var nextExpectedSeq: UInt16 = 0
     private let maxDelay: Int  // max frames to hold
 
-    /// - Parameter maxDelay: Maximum number of frames to buffer (default: 5 = 100ms at 20ms/frame)
-    public init(maxDelay: Int = 5) {
+    /// - Parameter maxDelay: Maximum number of frames to buffer (default: 10 = 200ms at 20ms/frame)
+    public init(maxDelay: Int = 10) {
         self.maxDelay = maxDelay
     }
 
