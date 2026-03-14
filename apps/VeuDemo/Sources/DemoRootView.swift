@@ -392,7 +392,7 @@ struct ChatTab: View {
                             ScrollView {
                                 LazyVStack(spacing: 8) {
                                     ForEach(coordinator.chatMessages) { msg in
-                                        ChatBubble(message: msg) { emoji in
+                                        ChatBubble(message: msg, myCallsign: appState.identity.callsign) { emoji in
                                             coordinator.sendReaction(emoji: emoji, targetCID: msg.id)
                                         }
                                         .id(msg.id)
@@ -464,6 +464,7 @@ struct ChatTab: View {
 
 struct ChatBubble: View {
     let message: ChatMessage
+    var myCallsign: String = ""
     var onReaction: ((String) -> Void)?
     @State private var showReactionPicker = false
 
@@ -507,7 +508,7 @@ struct ChatBubble: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .overlay(alignment: message.isMe ? .topLeading : .topTrailing) {
                         if !message.reactions.isEmpty {
-                            ReactionBadgeRow(reactions: message.reactions) { emoji in
+                            ReactionBadgeRow(reactions: message.reactions, myCallsign: myCallsign) { emoji in
                                 onReaction?(emoji)
                             }
                             .fixedSize()
@@ -583,11 +584,13 @@ struct ReactionPicker: View {
 
 struct ReactionBadgeRow: View {
     let reactions: [String: [String]]
+    var myCallsign: String = ""
     let onTap: (String) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(reactions.sorted(by: { $0.key < $1.key }), id: \.key) { emoji, senders in
+                let isMine = senders.contains(myCallsign)
                 Button {
                     onTap(emoji)
                 } label: {
@@ -602,8 +605,11 @@ struct ReactionBadgeRow: View {
                     }
                     .padding(.horizontal, 5)
                     .padding(.vertical, 3)
-                    .background(Color(.systemGray3))
+                    .background(isMine ? Color(red: 0.22, green: 0.58, blue: 0.36).opacity(0.55) : Color(.systemGray3))
                     .clipShape(Capsule())
+                    .overlay(
+                        isMine ? Capsule().stroke(Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6), lineWidth: 1) : nil
+                    )
                 }
                 .buttonStyle(.plain)
             }
@@ -909,7 +915,7 @@ struct TimelineInteractionBar: View {
             // Reaction badges (if any)
             if !reactions.isEmpty {
                 HStack(spacing: 4) {
-                    ReactionBadgeRow(reactions: reactions) { emoji in
+                    ReactionBadgeRow(reactions: reactions, myCallsign: coordinator.appState?.identity.callsign ?? "") { emoji in
                         coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
                     }
                     Spacer()
