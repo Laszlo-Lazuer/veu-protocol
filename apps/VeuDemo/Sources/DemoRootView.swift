@@ -557,18 +557,21 @@ struct ReactionPicker: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ForEach(emojis, id: \.self) { emoji in
                 Button {
                     onSelect(emoji)
                 } label: {
                     Text(emoji)
                         .font(.title2)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
         .background(.ultraThinMaterial)
         .clipShape(Capsule())
         .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
@@ -923,6 +926,8 @@ struct TimelineInteractionBar: View {
                     showReactionPicker = false
                     coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
                 }
+                .fixedSize()
+                .padding(.horizontal, 16)
                 .padding(.bottom, 8)
                 .transition(.scale.combined(with: .opacity))
             }
