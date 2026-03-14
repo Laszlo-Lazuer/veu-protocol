@@ -500,12 +500,42 @@ final class AppCoordinator: ObservableObject {
     }
 
     /// Aggregate reaction artifacts into a lookup: `targetCID → { emoji → [senders] }`.
+    /// Each sender keeps only their latest reaction per target. If their latest
+    /// reaction matches their previous one it's treated as a toggle-off (removed).
     private func aggregateReactions(from entries: [TimelineEntry]) -> [String: [String: [String]]] {
-        var result: [String: [String: [String]]] = [:]
+        // Collect all reactions sorted by timestamp (entries are already chronological)
+        struct R { let emoji: String; let sender: String; let target: String; let ts: TimeInterval }
+        var all: [R] = []
         for entry in entries where entry.artifactType == "reaction" {
             guard let data = entry.plaintextData,
                   let payload = try? JSONDecoder().decode(ReactionPayload.self, from: data) else { continue }
-            result[payload.targetCID, default: [:]][payload.emoji, default: []].append(payload.sender)
+            all.append(R(emoji: payload.emoji, sender: payload.sender, target: payload.targetCID, ts: payload.timestamp))
+        }
+        all.sort { $0.ts < $1.ts }
+
+        // For each (target, sender) keep only the latest reaction.
+        // If the latest matches the previous → toggle off (nil).
+        // If different → replace with the new emoji.
+        var latest: [String: [String: (emoji: String?, prev: String?)]] = [:]  // target → sender → state
+        for r in all {
+            let current = latest[r.target]?[r.sender]
+            if current?.emoji == r.emoji {
+                // Same emoji again → toggle off
+                latest[r.target, default: [:]][r.sender] = (emoji: nil, prev: r.emoji)
+            } else {
+                // New or different emoji → set it
+                latest[r.target, default: [:]][r.sender] = (emoji: r.emoji, prev: current?.emoji)
+            }
+        }
+
+        // Build final result
+        var result: [String: [String: [String]]] = [:]
+        for (target, senders) in latest {
+            for (sender, state) in senders {
+                if let emoji = state.emoji {
+                    result[target, default: [:]][emoji, default: []].append(sender)
+                }
+            }
         }
         return result
     }
