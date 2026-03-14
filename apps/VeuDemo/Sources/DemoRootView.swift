@@ -491,7 +491,6 @@ struct ChatBubble: View {
                                 : Color(.systemGray5))
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                    // Shadows OUTSIDE clipShape so they aren't clipped
                     .shadow(color: message.isMe
                         ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6)
                         : Color(white: 0.75).opacity(0.5),
@@ -505,18 +504,20 @@ struct ChatBubble: View {
                         : Color(white: 0.65).opacity(0.15),
                         radius: 16, x: 0, y: 0)
                     .fixedSize(horizontal: false, vertical: true)
+                    .overlay(alignment: message.isMe ? .topLeading : .topTrailing) {
+                        if !message.reactions.isEmpty {
+                            ReactionBadgeRow(reactions: message.reactions) { emoji in
+                                onReaction?(emoji)
+                            }
+                            .fixedSize()
+                            .offset(x: message.isMe ? -8 : 8, y: -12)
+                        }
+                    }
                     .onLongPressGesture(minimumDuration: 0.3) {
                         guard !message.isMe else { return }
                         showReactionPicker = true
                         HapticEngine.vueHum()
                     }
-
-                // Reaction badges
-                if !message.reactions.isEmpty {
-                    ReactionBadgeRow(reactions: message.reactions) { emoji in
-                        onReaction?(emoji)
-                    }
-                }
 
                 Text(message.timestamp, style: .time)
                     .font(.system(size: 10))
@@ -581,23 +582,23 @@ struct ReactionBadgeRow: View {
     let onTap: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(reactions.sorted(by: { $0.key < $1.key }), id: \.key) { emoji, senders in
                 Button {
                     onTap(emoji)
                 } label: {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 1) {
                         Text(emoji)
-                            .font(.body)
+                            .font(.caption2)
                         if senders.count > 1 {
                             Text("\(senders.count)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(.systemGray5))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(Color(.systemGray3))
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
