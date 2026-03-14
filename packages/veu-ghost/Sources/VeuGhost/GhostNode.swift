@@ -300,7 +300,9 @@ extension GhostNode {
                     self.listenForMessages(on: conn, key: key)
 
                 case .success(.voiceCall(let payload)):
-                    print("[GhostNode] Received voiceCall signal: \(payload.action) from \(payload.senderDeviceID)")
+                    if payload.action != .audioFrame {
+                        print("[GhostNode] Received voiceCall signal: \(payload.action) from \(payload.senderDeviceID)")
+                    }
                     self.syncEngine.delegate?.syncEngine(self.syncEngine, didReceiveVoiceCall: payload, from: conn)
                     self.listenForMessages(on: conn, key: key)
 
