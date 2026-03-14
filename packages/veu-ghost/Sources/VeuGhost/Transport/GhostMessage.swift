@@ -192,8 +192,6 @@ public enum GhostMessage: Codable, Equatable {
     public func seal(with circleKey: Data) throws -> Data {
         let jsonData = try JSONEncoder().encode(self)
         let key = SymmetricKey(data: circleKey)
-        let keyHash = circleKey.prefix(8).map { String(format: "%02x", $0) }.joined()
-        print("[GhostMessage] Sealing with keyHash=\(keyHash)…")
         do {
             let sealedBox = try AES.GCM.seal(jsonData, using: key)
             guard let combined = sealedBox.combined else {

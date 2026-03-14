@@ -916,7 +916,24 @@ extension AppCoordinator: ProximitySessionDelegate {
     /// Handle an incoming voice signal from the Ghost Network.
     func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
         if voiceCallManager == nil { setupVoiceCallManager() }
-        voiceCallManager?.handleVoiceSignal(payload)
+
+        // Audio frames need decryption before passing to VoiceCallManager
+        if payload.action == .audioFrame, let encryptedData = payload.audioFrameData {
+            guard let appState = appState,
+                  let circleID = appState.activeCircleID,
+                  let circleKey = appState.circleKeys[circleID],
+                  let callID = currentCallID else { return }
+
+            let transport = VoiceFrameTransport(circleKey: circleKey.keyData, callID: callID)
+            guard let decrypted = try? transport.decrypt(frame: encryptedData) else { return }
+
+            // Replace the encrypted audioFrameData with decrypted data
+            var decryptedPayload = payload
+            decryptedPayload.audioFrameData = decrypted
+            voiceCallManager?.handleVoiceSignal(decryptedPayload)
+        } else {
+            voiceCallManager?.handleVoiceSignal(payload)
+        }
     }
 
     /// Handle a received encrypted audio frame.
