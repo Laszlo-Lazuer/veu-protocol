@@ -482,16 +482,27 @@ struct ChatBubble: View {
                     .padding(.vertical, 8)
                     .foregroundColor(message.isMe ? .white : .primary)
                     .background(
-                        message.isMe
-                            ? Color(red: 0.22, green: 0.58, blue: 0.36)
-                            : Color(.systemGray5)
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(message.isMe
+                                ? Color(red: 0.22, green: 0.58, blue: 0.36)
+                                : Color(.systemGray5))
+                            // Tight inner glow — hugs the bubble edge
+                            .shadow(color: message.isMe
+                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6)
+                                : Color(white: 0.75).opacity(0.5),
+                                radius: 3, x: 0, y: 0)
+                            // Mid glow
+                            .shadow(color: message.isMe
+                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.35)
+                                : Color(white: 0.70).opacity(0.3),
+                                radius: 8, x: 0, y: 0)
+                            // Outer diffuse glow
+                            .shadow(color: message.isMe
+                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.15)
+                                : Color(white: 0.65).opacity(0.15),
+                                radius: 16, x: 0, y: 0)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .background(
-                        BubbleView(isSent: message.isMe, cornerRadius: 18)
-                            .padding(-8)
-                            .allowsHitTesting(false)
-                    )
                     .onLongPressGesture(minimumDuration: 0.3) {
                         showReactionPicker = true
                         HapticEngine.vueHum()
