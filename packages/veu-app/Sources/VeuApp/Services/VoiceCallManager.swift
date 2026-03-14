@@ -79,6 +79,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         payload.audioUDPPort = udpSocket?.localPort
         payload.audioAddresses = Self.localIPAddresses()
+        print("[VoiceCall] 📤 Offer UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? [])")
         #endif
         sendSignal?(payload)
         state = .outgoingRinging(callID: callID, recipientDevice: recipientDeviceID)
@@ -100,6 +101,7 @@ public final class VoiceCallManager: ObservableObject {
         // Store peer's UDP info for when we accept
         peerAudioAddresses = payload.audioAddresses ?? []
         peerAudioUDPPort = payload.audioUDPPort ?? 0
+        print("[VoiceCall] 📥 Offer UDP port: \(peerAudioUDPPort), addrs: \(peerAudioAddresses)")
 
         state = .incomingRinging(
             callID: payload.callID,
@@ -130,6 +132,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         payload.audioUDPPort = udpSocket?.localPort
         payload.audioAddresses = Self.localIPAddresses()
+        print("[VoiceCall] 📤 Answer UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? [])")
         #endif
         sendSignal?(payload)
         transitionToActive(callID: callID, peerDevice: callerDevice, peerCallsign: callerCallsign)

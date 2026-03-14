@@ -31,23 +31,36 @@ public final class VoiceUDPSocket {
     // MARK: - Listener
 
     /// Start listening for incoming UDP audio frames on a system-assigned port.
+    /// Blocks briefly (up to 2s) until the system assigns a port.
     public func startListening() throws {
         let params = NWParameters.udp
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.any), port: .any)
         params.serviceClass = .interactiveVoice
 
-        let listener = try NWListener(using: params)
-        listener.stateUpdateHandler = { [weak self] state in
-            if case .ready = state, let port = self?.listener?.port?.rawValue {
-                self?.localPort = port
-                print("[VoiceUDP] Listening on port \(port)")
+        let newListener = try NWListener(using: params)
+        self.listener = newListener
+        let portReady = DispatchSemaphore(value: 0)
+
+        newListener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
+                if let port = newListener.port?.rawValue {
+                    self?.localPort = port
+                    print("[VoiceUDP] Listening on port \(port)")
+                }
+                portReady.signal()
+            case .failed(let error):
+                print("[VoiceUDP] Listener failed: \(error)")
+                portReady.signal()
+            default:
+                break
             }
         }
-        listener.newConnectionHandler = { [weak self] connection in
+        newListener.newConnectionHandler = { [weak self] connection in
             self?.handleIncomingConnection(connection)
         }
-        listener.start(queue: queue)
-        self.listener = listener
+        newListener.start(queue: queue)
+        _ = portReady.wait(timeout: .now() + 2.0)
     }
 
     private func handleIncomingConnection(_ connection: NWConnection) {
