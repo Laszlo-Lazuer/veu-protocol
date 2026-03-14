@@ -299,6 +299,11 @@ extension GhostNode {
                     self.syncEngine.handleBurnNotice(burn)
                     self.listenForMessages(on: conn, key: key)
 
+                case .success(.voiceCall(let payload)):
+                    print("[GhostNode] Received voiceCall signal: \(payload.action) from \(payload.senderDeviceID)")
+                    self.syncEngine.delegate?.syncEngine(self.syncEngine, didReceiveVoiceCall: payload, from: conn)
+                    self.listenForMessages(on: conn, key: key)
+
                 case .failure(let error):
                     print("[GhostNode] Receive failed on \(key): \(error)")
                     self.syncEngine.delegate?.syncEngine(self.syncEngine, didFailWith: error)
