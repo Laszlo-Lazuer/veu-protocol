@@ -530,13 +530,19 @@ struct ChatBubble: View {
                     .transition(.scale.combined(with: .opacity))
                 }
             }
+            .background {
+                // Dismiss layer — covers full screen when picker is open
+                if showReactionPicker {
+                    Color.black.opacity(0.01)
+                        .ignoresSafeArea()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onTapGesture { showReactionPicker = false }
+                }
+            }
 
             if !message.isMe { Spacer(minLength: 60) }
         }
         .animation(.spring(response: 0.25), value: showReactionPicker)
-        .onTapGesture {
-            if showReactionPicker { showReactionPicker = false }
-        }
     }
 }
 
