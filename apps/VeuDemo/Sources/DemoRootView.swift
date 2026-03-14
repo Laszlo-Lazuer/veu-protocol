@@ -1427,6 +1427,7 @@ struct FullscreenImageViewer: View {
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var saved = false
 
     var body: some View {
         ZStack {
@@ -1480,12 +1481,31 @@ struct FullscreenImageViewer: View {
                 }
         }
         .overlay(alignment: .topTrailing) {
-            Button { onDismiss() } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .padding()
+            HStack(spacing: 16) {
+                Button {
+                    UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                    saved = true
+                    HapticEngine.vueHum()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { saved = false }
+                } label: {
+                    Image(systemName: saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                        .font(.title2)
+                        .foregroundStyle(saved ? .green : .white.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button { onDismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
+            .padding()
         }
         .statusBarHidden()
     }
