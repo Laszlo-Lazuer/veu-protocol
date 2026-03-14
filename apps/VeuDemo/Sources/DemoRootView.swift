@@ -486,23 +486,22 @@ struct ChatBubble: View {
                             .fill(message.isMe
                                 ? Color(red: 0.22, green: 0.58, blue: 0.36)
                                 : Color(.systemGray5))
-                            // Tight inner glow — hugs the bubble edge
-                            .shadow(color: message.isMe
-                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6)
-                                : Color(white: 0.75).opacity(0.5),
-                                radius: 3, x: 0, y: 0)
-                            // Mid glow
-                            .shadow(color: message.isMe
-                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.35)
-                                : Color(white: 0.70).opacity(0.3),
-                                radius: 8, x: 0, y: 0)
-                            // Outer diffuse glow
-                            .shadow(color: message.isMe
-                                ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.15)
-                                : Color(white: 0.65).opacity(0.15),
-                                radius: 16, x: 0, y: 0)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
+                    // Shadows OUTSIDE clipShape so they aren't clipped
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6)
+                        : Color(white: 0.75).opacity(0.5),
+                        radius: 3, x: 0, y: 0)
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.35)
+                        : Color(white: 0.70).opacity(0.3),
+                        radius: 8, x: 0, y: 0)
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.15)
+                        : Color(white: 0.65).opacity(0.15),
+                        radius: 16, x: 0, y: 0)
+                    .fixedSize(horizontal: false, vertical: true)
                     .onLongPressGesture(minimumDuration: 0.3) {
                         showReactionPicker = true
                         HapticEngine.vueHum()
@@ -578,15 +577,15 @@ struct ReactionBadgeRow: View {
                 } label: {
                     HStack(spacing: 2) {
                         Text(emoji)
-                            .font(.caption)
+                            .font(.body)
                         if senders.count > 1 {
                             Text("\(senders.count)")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                     .background(Color(.systemGray5))
                     .clipShape(Capsule())
                 }
