@@ -18,7 +18,7 @@ let DEV_MODE = false
 #endif
 
 /// Central coordinator managing app state and all service lifecycles.
-final class AppCoordinator: ObservableObject {
+final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
 
     // MARK: - Published state
 
@@ -716,7 +716,7 @@ final class AppCoordinator: ObservableObject {
                 self?.syncedCount += 1
                 self?.networkLog.append("📥 Received artifact \(String(cid.prefix(8)))… via \(transport)")
                 self?.reloadTimeline()
-                self?.notifyIfBackgrounded()
+                self?.fireVagueNotification()
             }
         }
 
@@ -843,12 +843,22 @@ extension AppCoordinator: ProximitySessionDelegate {
 
     /// Request notification permission on first launch.
     func requestNotificationPermission() {
+        UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
                 print("[Notifications] Permission error: \(error)")
             }
             print("[Notifications] Permission granted: \(granted)")
         }
+    }
+
+    /// Present notification banners even while the app is in the foreground.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 
     /// Fire a vague local notification for new activity.
@@ -868,18 +878,6 @@ extension AppCoordinator: ProximitySessionDelegate {
             if let error = error {
                 print("[Notifications] Failed to fire: \(error)")
             }
-        }
-    }
-
-    /// Check if app is in background and fire notification if so.
-    private func notifyIfBackgrounded() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            #if os(iOS)
-            if UIApplication.shared.applicationState != .active {
-                self.fireVagueNotification()
-            }
-            #endif
         }
     }
 
