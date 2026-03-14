@@ -59,6 +59,7 @@ public final class AudioEngine {
         }
 
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        print("[AudioEngine] Input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)")
 
         // Connect player → main mixer for playback
         let mixerFormat = AVAudioFormat(
@@ -161,7 +162,13 @@ public final class AudioEngine {
 
     // MARK: - Private
 
+    private var tapCallCount = 0
+
     private func handleCapturedBuffer(_ buffer: AVAudioPCMBuffer) {
+        tapCallCount += 1
+        if tapCallCount <= 3 || tapCallCount % 500 == 0 {
+            print("[AudioEngine] 🎤 Tap fired #\(tapCallCount): \(buffer.frameLength) frames")
+        }
         guard let converter = self.converter else {
             extractAndDeliver(buffer)
             return
@@ -180,6 +187,8 @@ public final class AudioEngine {
 
         if error == nil, outputBuffer.frameLength > 0 {
             extractAndDeliver(outputBuffer)
+        } else if let error = error {
+            print("[AudioEngine] ⚠️ Converter error: \(error)")
         }
     }
 
