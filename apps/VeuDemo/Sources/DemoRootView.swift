@@ -1253,8 +1253,63 @@ struct CaptureSheet: View {
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
-        guard let jpegData = resized.jpegData(compressionQuality: 0.7) else { return rawData }
+
+        // Anti-PRNU: random micro-crop (1-4px per edge) to break spatial alignment
+        let cropped = randomMicroCrop(resized)
+        // Anti-PRNU: inject subtle Gaussian noise to destroy sensor fingerprint
+        let noised = injectSensorNoise(cropped)
+
+        guard let jpegData = noised.jpegData(compressionQuality: 0.7) else { return rawData }
         return stripMetadata(from: jpegData) ?? jpegData
+    }
+
+    /// Crop 1-4 random pixels from each edge to break PRNU spatial alignment.
+    private func randomMicroCrop(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let w = cg.width, h = cg.height
+        guard w > 16, h > 16 else { return image }
+        let top = Int.random(in: 1...4)
+        let left = Int.random(in: 1...4)
+        let bottom = Int.random(in: 1...4)
+        let right = Int.random(in: 1...4)
+        let rect = CGRect(x: left, y: top, width: w - left - right, height: h - top - bottom)
+        guard let cropped = cg.cropping(to: rect) else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    /// Add subtle Gaussian noise (σ≈2.5) to pixel values, destroying PRNU patterns.
+    private func injectSensorNoise(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let w = cg.width, h = cg.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bytesPerRow = w * 4
+        var pixels = [UInt8](repeating: 0, count: h * bytesPerRow)
+        guard let ctx = CGContext(
+            data: &pixels, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        // Box-Muller Gaussian noise, σ ≈ 2.5 — invisible but breaks PRNU correlation
+        let sigma: Double = 2.5
+        let count = w * h * 4
+        var i = 0
+        while i < count {
+            // Skip alpha channel (every 4th byte)
+            for ch in 0..<3 {
+                let u1 = max(Double.random(in: 0..<1), 1e-10)
+                let u2 = Double.random(in: 0..<1)
+                let noise = sigma * (-2.0 * log(u1)).squareRoot() * cos(2.0 * .pi * u2)
+                let val = Double(pixels[i + ch]) + noise
+                pixels[i + ch] = UInt8(clamping: Int(val.rounded()))
+            }
+            i += 4
+        }
+
+        guard let noisedCG = ctx.makeImage() else { return image }
+        return UIImage(cgImage: noisedCG, scale: image.scale, orientation: image.imageOrientation)
     }
 
     /// Remove all EXIF/GPS/TIFF metadata from JPEG data for privacy.
