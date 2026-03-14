@@ -55,7 +55,12 @@ public final class AudioEngine {
 
         // Enable voice processing: echo cancellation, noise suppression, AGC
         if !inputNode.isVoiceProcessingEnabled {
-            try inputNode.setVoiceProcessingEnabled(true)
+            do {
+                try inputNode.setVoiceProcessingEnabled(true)
+                print("[AudioEngine] ✅ Voice processing enabled")
+            } catch {
+                print("[AudioEngine] ⚠️ Voice processing failed: \(error)")
+            }
         }
 
         // Connect player → main mixer for playback
@@ -67,29 +72,22 @@ public final class AudioEngine {
         )!
         engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
 
-        // Start engine first — VP changes the audio graph,
-        // the tap format is only valid after the engine is running.
-        try engine.start()
-
-        // Read format AFTER engine start so VP has configured the graph
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        print("[AudioEngine] Input format after start: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)")
-
-        // Create reusable converter if input format differs from our target
-        if inputFormat.sampleRate != Self.sampleRate ||
-           inputFormat.channelCount != Self.channels ||
-           inputFormat.commonFormat != .pcmFormatInt16 {
-            self.converter = AVAudioConverter(from: inputFormat, to: captureFormat)
-        } else {
-            self.converter = nil
-        }
-
-        // Install tap with nil format — let the system deliver in its native format
-        // (required for voice processing compatibility)
+        // Install tap BEFORE engine.start() — Apple's requirement.
+        // Use format: nil so the system delivers in VP's native format.
         let bufferSize = AVAudioFrameCount(Self.framesPerBuffer)
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             self?.handleCapturedBuffer(buffer)
         }
+        print("[AudioEngine] Tap installed on inputNode (format: nil, bufferSize: \(bufferSize))")
+
+        // Prepare and start
+        engine.prepare()
+        try engine.start()
+        print("[AudioEngine] ✅ Engine started")
+
+        // Read the actual format after start for diagnostics
+        let actualFormat = inputNode.outputFormat(forBus: 0)
+        print("[AudioEngine] Input format: \(actualFormat.sampleRate)Hz, \(actualFormat.channelCount)ch, \(actualFormat.commonFormat.rawValue)")
 
         playerNode.play()
         playerNode.volume = 1.0
