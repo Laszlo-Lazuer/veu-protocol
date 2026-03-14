@@ -1,0 +1,363 @@
+// VoiceCallManager.swift — Veu Protocol: Voice call state machine
+//
+// Manages the lifecycle of 1:1 calls and circle voice rooms.
+// Coordinates between signaling (GhostMessage), audio pipeline
+// (AudioEngine + AudioCodec), and encrypted frame transport.
+
+import Foundation
+import VeuGhost
+
+#if canImport(CryptoKit)
+import CryptoKit
+#else
+import Crypto
+#endif
+
+/// Voice call state.
+public enum VoiceCallState: Equatable {
+    case idle
+    case outgoingRinging(callID: String, recipientDevice: String)
+    case incomingRinging(callID: String, callerDevice: String, callerCallsign: String)
+    case active(callID: String, peerDevice: String, peerCallsign: String)
+    case inRoom(roomID: String, participants: [String])
+    case ended(reason: String)
+}
+
+/// Manages voice call lifecycle and audio pipeline.
+public final class VoiceCallManager: ObservableObject {
+    @Published public private(set) var state: VoiceCallState = .idle
+    @Published public var isMuted: Bool = false
+    @Published public var isSpeakerOn: Bool = false
+    @Published public private(set) var callDuration: TimeInterval = 0
+
+    // Dependencies
+    public var circleKey: Data?
+    public var deviceID: String = ""
+    public var callsign: String = ""
+
+    /// Send a voice signal to a peer via the Ghost Network.
+    public var sendSignal: ((GhostMessage.VoiceCallPayload) -> Void)?
+    /// Send encrypted audio frame data to the active peer(s).
+    public var sendAudioFrame: ((Data) -> Void)?
+
+    #if canImport(AVFoundation)
+    private let audioEngine = AudioEngine()
+    private let codec = AudioCodec()
+    private let jitterBuffer = JitterBuffer()
+    #endif
+    private var sequenceNumber: UInt16 = 0
+    private var ringTimer: Timer?
+    private var durationTimer: Timer?
+    private var callStartTime: Date?
+
+    private static let ringTimeout: TimeInterval = 30
+
+    public init() {}
+
+    // MARK: - Outgoing Call (1:1)
+
+    /// Initiate a 1:1 call to a specific peer.
+    public func startCall(to recipientDeviceID: String) -> String {
+        let callID = UUID().uuidString
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: callID,
+            action: .offer,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            recipientDeviceID: recipientDeviceID
+        )
+        sendSignal?(payload)
+        state = .outgoingRinging(callID: callID, recipientDevice: recipientDeviceID)
+        startRingTimer(callID: callID)
+        return callID
+    }
+
+    // MARK: - Incoming Call
+
+    /// Handle an incoming call offer from a peer.
+    public func handleIncomingOffer(_ payload: GhostMessage.VoiceCallPayload) {
+        guard case .idle = state else {
+            // Busy — reject
+            rejectCall(callID: payload.callID, recipientDeviceID: payload.senderDeviceID)
+            return
+        }
+        state = .incomingRinging(
+            callID: payload.callID,
+            callerDevice: payload.senderDeviceID,
+            callerCallsign: payload.senderCallsign
+        )
+        startRingTimer(callID: payload.callID)
+    }
+
+    /// Accept the incoming call.
+    public func acceptCall() {
+        guard case .incomingRinging(let callID, let callerDevice, let callerCallsign) = state else { return }
+        cancelRingTimer()
+
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: callID,
+            action: .answer,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            recipientDeviceID: callerDevice,
+            accepted: true
+        )
+        sendSignal?(payload)
+        transitionToActive(callID: callID, peerDevice: callerDevice, peerCallsign: callerCallsign)
+    }
+
+    /// Decline the incoming call.
+    public func declineCall() {
+        guard case .incomingRinging(let callID, let callerDevice, _) = state else { return }
+        rejectCall(callID: callID, recipientDeviceID: callerDevice)
+        endCallCleanup(reason: "Declined")
+    }
+
+    // MARK: - Call Answer Handling
+
+    /// Handle a call answer from the remote peer.
+    public func handleAnswer(_ payload: GhostMessage.VoiceCallPayload) {
+        guard case .outgoingRinging(let callID, _) = state, payload.callID == callID else { return }
+        cancelRingTimer()
+
+        if payload.accepted == true {
+            transitionToActive(callID: callID, peerDevice: payload.senderDeviceID, peerCallsign: payload.senderCallsign)
+        } else {
+            endCallCleanup(reason: "Declined by peer")
+        }
+    }
+
+    // MARK: - End Call
+
+    /// End the current call.
+    public func endCall() {
+        let callID: String
+        let peerDevice: String?
+
+        switch state {
+        case .outgoingRinging(let id, let peer):
+            callID = id; peerDevice = peer
+        case .incomingRinging(let id, let peer, _):
+            callID = id; peerDevice = peer
+        case .active(let id, let peer, _):
+            callID = id; peerDevice = peer
+        case .inRoom(let roomID, _):
+            leaveRoom(roomID: roomID)
+            return
+        default:
+            return
+        }
+
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: callID,
+            action: .end,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            recipientDeviceID: peerDevice,
+            reason: "User ended"
+        )
+        sendSignal?(payload)
+        endCallCleanup(reason: "Call ended")
+    }
+
+    /// Handle a remote end signal.
+    public func handleEnd(_ payload: GhostMessage.VoiceCallPayload) {
+        endCallCleanup(reason: payload.reason ?? "Peer ended")
+    }
+
+    // MARK: - Voice Rooms (Circle)
+
+    /// Open a voice room for the circle.
+    public func openRoom(circleID: String) -> String {
+        let roomID = UUID().uuidString
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: roomID,
+            action: .roomOpen,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            circleID: circleID
+        )
+        sendSignal?(payload)
+        state = .inRoom(roomID: roomID, participants: [callsign])
+        startAudioPipeline()
+        return roomID
+    }
+
+    /// Join an existing voice room.
+    public func joinRoom(roomID: String, circleID: String) {
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: roomID,
+            action: .roomJoin,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            circleID: circleID
+        )
+        sendSignal?(payload)
+        state = .inRoom(roomID: roomID, participants: [callsign])
+        startAudioPipeline()
+    }
+
+    /// Leave the voice room.
+    public func leaveRoom(roomID: String) {
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: roomID,
+            action: .roomLeave,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign
+        )
+        sendSignal?(payload)
+        endCallCleanup(reason: "Left room")
+    }
+
+    /// Handle a peer joining the room.
+    public func handleRoomJoin(_ payload: GhostMessage.VoiceCallPayload) {
+        guard case .inRoom(let roomID, var participants) = state,
+              payload.callID == roomID else { return }
+        if !participants.contains(payload.senderCallsign) {
+            participants.append(payload.senderCallsign)
+            state = .inRoom(roomID: roomID, participants: participants)
+        }
+    }
+
+    /// Handle a peer leaving the room.
+    public func handleRoomLeave(_ payload: GhostMessage.VoiceCallPayload) {
+        guard case .inRoom(let roomID, var participants) = state,
+              payload.callID == roomID else { return }
+        participants.removeAll { $0 == payload.senderCallsign }
+        state = .inRoom(roomID: roomID, participants: participants)
+    }
+
+    // MARK: - Audio Frame Handling
+
+    /// Handle a received encrypted audio frame.
+    public func handleReceivedAudioFrame(_ frameData: Data) {
+        #if canImport(AVFoundation)
+        guard frameData.count >= 3 else { return }
+
+        // Parse: [2-byte seq][compressed audio]
+        let seq = frameData.withUnsafeBytes { ptr -> UInt16 in
+            ptr.load(fromByteOffset: 0, as: UInt16.self).bigEndian
+        }
+        let compressedAudio = frameData.subdata(in: 2..<frameData.count)
+        let pcmData = codec.decode(compressedAudio)
+        jitterBuffer.insert(sequence: seq, data: pcmData)
+
+        // Drain jitter buffer
+        while let frame = jitterBuffer.pull() {
+            audioEngine.playBuffer(frame)
+        }
+        #endif
+    }
+
+    // MARK: - Dispatch incoming voice signals
+
+    /// Route an incoming voice call payload to the appropriate handler.
+    public func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            switch payload.action {
+            case .offer:
+                self.handleIncomingOffer(payload)
+            case .answer:
+                self.handleAnswer(payload)
+            case .end:
+                self.handleEnd(payload)
+            case .roomOpen:
+                // Another peer opened a room — notify UI (don't auto-join)
+                break
+            case .roomJoin:
+                self.handleRoomJoin(payload)
+            case .roomLeave:
+                self.handleRoomLeave(payload)
+            }
+        }
+    }
+
+    // MARK: - Private
+
+    private func transitionToActive(callID: String, peerDevice: String, peerCallsign: String) {
+        state = .active(callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+        startAudioPipeline()
+        callStartTime = Date()
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let start = self?.callStartTime else { return }
+            self?.callDuration = Date().timeIntervalSince(start)
+        }
+    }
+
+    private func startAudioPipeline() {
+        #if canImport(AVFoundation)
+        sequenceNumber = 0
+        jitterBuffer.reset()
+        do {
+            try audioEngine.start()
+            audioEngine.onCapturedBuffer = { [weak self] pcmData in
+                self?.processCapturedAudio(pcmData)
+            }
+        } catch {
+            print("[VoiceCallManager] Failed to start audio: \(error)")
+            endCallCleanup(reason: "Audio error")
+        }
+        #endif
+    }
+
+    private func processCapturedAudio(_ pcmData: Data) {
+        #if canImport(AVFoundation)
+        let compressed = codec.encode(pcmData)
+
+        // Frame: [2-byte big-endian seq][compressed audio]
+        var frame = Data()
+        var seq = sequenceNumber.bigEndian
+        frame.append(Data(bytes: &seq, count: 2))
+        frame.append(compressed)
+        sequenceNumber &+= 1
+
+        sendAudioFrame?(frame)
+        #endif
+    }
+
+    private func rejectCall(callID: String, recipientDeviceID: String) {
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: callID,
+            action: .answer,
+            senderDeviceID: deviceID,
+            senderCallsign: callsign,
+            recipientDeviceID: recipientDeviceID,
+            accepted: false
+        )
+        sendSignal?(payload)
+    }
+
+    private func endCallCleanup(reason: String) {
+        cancelRingTimer()
+        durationTimer?.invalidate()
+        durationTimer = nil
+        callStartTime = nil
+        callDuration = 0
+        sequenceNumber = 0
+        #if canImport(AVFoundation)
+        audioEngine.stop()
+        audioEngine.onCapturedBuffer = nil
+        jitterBuffer.reset()
+        #endif
+        state = .ended(reason: reason)
+        // Auto-transition back to idle after a brief delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            if case .ended = self?.state {
+                self?.state = .idle
+            }
+        }
+    }
+
+    private func startRingTimer(callID: String) {
+        cancelRingTimer()
+        ringTimer = Timer.scheduledTimer(withTimeInterval: Self.ringTimeout, repeats: false) { [weak self] _ in
+            self?.endCallCleanup(reason: "No answer")
+        }
+    }
+
+    private func cancelRingTimer() {
+        ringTimer?.invalidate()
+        ringTimer = nil
+    }
+}
