@@ -98,6 +98,49 @@ public final class GhostNode: @unchecked Sendable {
         }
     }
 
+    /// Broadcast a GhostMessage to all connected peers (for voice signaling, etc.).
+    public func broadcastMessage(_ message: GhostMessage) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            for (key, conn) in self.connections {
+                conn.send(message) { result in
+                    if case .failure(let error) = result {
+                        print("[GhostNode] broadcastMessage failed to \(key): \(error)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Send a GhostMessage to a specific peer by device ID.
+    public func sendMessage(_ message: GhostMessage, to peerID: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let conn = self.connections[peerID] {
+                conn.send(message) { result in
+                    if case .failure(let error) = result {
+                        print("[GhostNode] sendMessage failed to \(peerID): \(error)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Broadcast raw data to all connected peers (for encrypted audio frames).
+    public func broadcastRawData(_ data: Data) {
+        // For v1, wrap raw audio in a voiceCall message with a special "audioFrame" action
+        // Future: dedicated UDP transport for lower latency
+        let payload = GhostMessage.VoiceCallPayload(
+            callID: "_audio",
+            action: .audioFrame,
+            senderDeviceID: deviceID,
+            senderCallsign: "",
+            audioFrameData: data
+        )
+        let message = GhostMessage.voiceCall(payload)
+        broadcastMessage(message)
+    }
+
     // MARK: - Outbound Sync
 
     /// Manually trigger a sync with a discovered peer endpoint.

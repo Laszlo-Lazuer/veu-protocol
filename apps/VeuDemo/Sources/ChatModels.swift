@@ -73,4 +73,11 @@ struct Conversation: Identifiable, Equatable {
     var lastMessage: String?
     var lastTimestamp: Date?
     var unreadCount: Int
+
+    var displayName: String {
+        switch type {
+        case .circle: return "Circle Chat"
+        case .dm(_, let callsign): return callsign
+        }
+    }
 }

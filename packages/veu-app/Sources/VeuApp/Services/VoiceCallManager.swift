@@ -253,6 +253,13 @@ public final class VoiceCallManager: ObservableObject {
 
     /// Route an incoming voice call payload to the appropriate handler.
     public func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
+        // Handle audio frames on background queue for low latency
+        if payload.action == .audioFrame {
+            if let frameData = payload.audioFrameData {
+                handleReceivedAudioFrame(frameData)
+            }
+            return
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             switch payload.action {
@@ -269,6 +276,8 @@ public final class VoiceCallManager: ObservableObject {
                 self.handleRoomJoin(payload)
             case .roomLeave:
                 self.handleRoomLeave(payload)
+            case .audioFrame:
+                break // handled above
             }
         }
     }

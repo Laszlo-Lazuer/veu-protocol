@@ -53,6 +53,9 @@ public final class NetworkService {
     /// Callback invoked when a peer disconnects.
     public var onPeerDisconnected: ((String) -> Void)?
 
+    /// Callback invoked when a voice call signal is received.
+    public var onVoiceCallReceived: ((GhostMessage.VoiceCallPayload) -> Void)?
+
     // MARK: - Configuration
 
     /// Optional relay server URL for global sync.
@@ -148,5 +151,9 @@ extension NetworkService: MeshNodeDelegate {
 
     public func meshNode(_ node: MeshNode, didFailWith error: Error) {
         lastError = "\(error)"
+    }
+
+    public func meshNode(_ node: MeshNode, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload) {
+        onVoiceCallReceived?(payload)
     }
 }

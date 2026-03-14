@@ -30,6 +30,9 @@ public protocol MeshNodeDelegate: AnyObject {
 
     /// Called when an error occurs.
     func meshNode(_ node: MeshNode, didFailWith error: Error)
+
+    /// Called when a voice call signal is received.
+    func meshNode(_ node: MeshNode, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload)
 }
 
 /// Multi-transport mesh coordinator for the Ghost Network.
@@ -218,5 +221,9 @@ extension MeshNode: SyncEngineDelegate {
 
     public func syncEngine(_ engine: SyncEngine, didFailWith error: VeuGhostError) {
         delegate?.meshNode(self, didFailWith: error)
+    }
+
+    public func syncEngine(_ engine: SyncEngine, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload, from connection: any TransportConnection) {
+        delegate?.meshNode(self, didReceiveVoiceCall: payload)
     }
 }

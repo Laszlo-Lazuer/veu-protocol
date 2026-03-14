@@ -24,7 +24,7 @@ struct VeuDemoApp: App {
                     .task { coordinator.bootstrap() }
             }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background:
                 coordinator.scheduleBackgroundSync()

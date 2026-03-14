@@ -141,6 +141,8 @@ public enum GhostMessage: Codable, Equatable {
             case roomOpen       // Announce a new voice room
             case roomJoin       // Peer joining the room
             case roomLeave      // Peer leaving the room
+            // Audio data
+            case audioFrame     // Encrypted audio frame data
         }
 
         /// Unique call or room identifier.
@@ -159,10 +161,13 @@ public enum GhostMessage: Codable, Equatable {
         public var accepted: Bool?
         /// End reason (end action only).
         public var reason: String?
+        /// Encrypted audio frame data (audioFrame action only).
+        public var audioFrameData: Data?
 
         public init(callID: String, action: Action, senderDeviceID: String,
                     senderCallsign: String, recipientDeviceID: String? = nil,
-                    circleID: String? = nil, accepted: Bool? = nil, reason: String? = nil) {
+                    circleID: String? = nil, accepted: Bool? = nil, reason: String? = nil,
+                    audioFrameData: Data? = nil) {
             self.callID = callID
             self.action = action
             self.senderDeviceID = senderDeviceID
@@ -171,6 +176,7 @@ public enum GhostMessage: Codable, Equatable {
             self.circleID = circleID
             self.accepted = accepted
             self.reason = reason
+            self.audioFrameData = audioFrameData
         }
     }
 

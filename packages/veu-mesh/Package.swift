@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "VeuMesh",
     platforms: [
-        .iOS(.v16),
+        .iOS("26.0"),
         .macOS(.v13)
     ],
     products: [
