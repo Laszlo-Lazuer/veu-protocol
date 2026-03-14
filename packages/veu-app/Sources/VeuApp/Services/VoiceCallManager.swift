@@ -46,6 +46,10 @@ public final class VoiceCallManager: ObservableObject {
     private var udpSocket: VoiceUDPSocket?
     private var peerUDPConnected = false
     public let callKitManager = CallKitManager()
+    /// Whether we initiated this call (affects CallKit API usage).
+    private var isOutgoingCall = false
+    /// Whether CallKit successfully reported this call.
+    private var callKitActive = false
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
@@ -95,7 +99,10 @@ public final class VoiceCallManager: ObservableObject {
         let callID = UUID().uuidString
 
         #if os(iOS)
+        isOutgoingCall = true
+        callKitActive = false
         setupUDP()
+        // CallKit outgoing — non-fatal if it fails
         callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID)
         #endif
 
@@ -133,6 +140,11 @@ public final class VoiceCallManager: ObservableObject {
         peerAudioUDPPort = payload.audioUDPPort ?? 0
         print("[VoiceCall] 📥 Offer UDP port: \(peerAudioUDPPort), addrs: \(peerAudioAddresses)")
 
+        #if os(iOS)
+        isOutgoingCall = false
+        callKitActive = false
+        #endif
+
         state = .incomingRinging(
             callID: payload.callID,
             callerDevice: payload.senderDeviceID,
@@ -140,23 +152,36 @@ public final class VoiceCallManager: ObservableObject {
         )
         startRingTimer(callID: payload.callID)
 
-        // Report to CallKit — shows native incoming call UI on lock screen
+        // Report to CallKit — shows native incoming call UI on lock screen.
+        // Non-fatal: if CallKit fails (DND, stale state), our in-app UI still works.
         #if os(iOS)
         callKitManager.reportIncomingCall(
             callID: payload.callID,
             callerName: payload.senderCallsign
-        )
+        ) { [weak self] error in
+            if let error = error {
+                print("[CallKit] ⚠️ Incoming call report failed: \(error) — using in-app UI only")
+                self?.callKitActive = false
+            } else {
+                self?.callKitActive = true
+            }
+        }
         #endif
     }
 
     /// Accept the incoming call.
-    /// When called from our UI, routes through CallKit so iOS properly activates
-    /// the audio session (CallKit's onAnswerCall callback calls performAccept).
+    /// Routes through CallKit if active, otherwise calls performAccept directly.
     public func acceptCall() {
         guard case .incomingRinging(let callID, _, _) = state else { return }
         #if os(iOS)
-        // Route through CallKit → triggers CXAnswerCallAction → onAnswerCall → performAccept
-        callKitManager.answerCall(callID: callID)
+        if callKitActive {
+            // Route through CallKit → CXAnswerCallAction → onAnswerCall → performAccept
+            callKitManager.answerCall(callID: callID)
+        } else {
+            // CallKit wasn't available — accept directly
+            print("[VoiceCall] CallKit not active, accepting directly")
+            performAccept()
+        }
         #else
         performAccept()
         #endif
@@ -414,15 +439,19 @@ public final class VoiceCallManager: ObservableObject {
         }
 
         #if os(iOS)
-        // Report connected to CallKit and defer audio start until
-        // CallKit activates the audio session (didActivate callback).
-        callKitManager.reportOutgoingCallConnected(callID: callID)
+        // Only the caller reports "connected" to CallKit
+        if isOutgoingCall {
+            callKitManager.reportOutgoingCallConnected(callID: callID)
+        }
+
+        // Defer audio start until CallKit activates session (didActivate callback)
         pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
 
-        // Fallback: if CallKit doesn't activate quickly, start audio anyway
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        // Fallback: if CallKit doesn't activate quickly (or isn't active), start audio directly
+        let timeout: TimeInterval = callKitActive ? 1.5 : 0.1
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
             guard let self = self, self.pendingActive != nil else { return }
-            print("[VoiceCall] ⏰ CallKit audio activation timeout — starting audio directly")
+            print("[VoiceCall] ⏰ Starting audio directly (CallKit active: \(self.callKitActive))")
             self.pendingActive = nil
             self.startAudioPipeline()
         }
@@ -490,18 +519,22 @@ public final class VoiceCallManager: ObservableObject {
         seenSignals.removeAll()
         pendingActive = nil
 
-        // Report to CallKit
+        // Report to CallKit (only if it was tracking this call)
         #if os(iOS)
-        let callID: String?
-        switch state {
-        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
-            callID = id
-        default:
-            callID = nil
+        if callKitActive {
+            let callID: String?
+            switch state {
+            case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+                callID = id
+            default:
+                callID = nil
+            }
+            if let callID = callID {
+                callKitManager.reportCallEnded(callID: callID, reason: reason == "Declined" ? .declinedElsewhere : .remoteEnded)
+            }
         }
-        if let callID = callID {
-            callKitManager.reportCallEnded(callID: callID, reason: reason == "Declined" ? .declinedElsewhere : .remoteEnded)
-        }
+        isOutgoingCall = false
+        callKitActive = false
         #endif
 
         peerAudioAddresses = []
