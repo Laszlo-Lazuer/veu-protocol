@@ -716,6 +716,7 @@ struct DemoTimelineTab: View {
             TimelineInteractionBar(
                 entry: entry,
                 comments: coordinator.commentsByPostCID[entry.cid] ?? [],
+                reactions: coordinator.reactionsByPostCID[entry.cid] ?? [:],
                 coordinator: coordinator
             )
         }
@@ -894,6 +895,7 @@ struct DemoTimelineTab: View {
 struct TimelineInteractionBar: View {
     let entry: TimelineEntry
     let comments: [Comment]
+    let reactions: [String: [String]]
     @ObservedObject var coordinator: AppCoordinator
     @State private var showReactionPicker = false
     @State private var showComments = false
@@ -902,11 +904,24 @@ struct TimelineInteractionBar: View {
     private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 4) {
+            // Reaction badges (if any)
+            if !reactions.isEmpty {
+                HStack(spacing: 4) {
+                    ReactionBadgeRow(reactions: reactions) { emoji in
+                        coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+            }
+
             // Reaction + comment action row
             HStack(spacing: 20) {
                 Button {
-                    showReactionPicker.toggle()
+                    withAnimation(.spring(response: 0.25)) {
+                        showReactionPicker.toggle()
+                    }
                     HapticEngine.vueHum()
                 } label: {
                     Image(systemName: "face.smiling")

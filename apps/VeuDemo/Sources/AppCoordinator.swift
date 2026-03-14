@@ -412,6 +412,7 @@ final class AppCoordinator: ObservableObject {
         // Collect reactions keyed by target CID
         let myCallsign = state.identity.callsign
         let reactionsByCID = aggregateReactions(from: vm.entries)
+        reactionsByPostCID = reactionsByCID
         commentsByPostCID = aggregateComments(from: vm.entries, myCallsign: myCallsign)
 
         // Also attach reactions to timeline posts
@@ -474,6 +475,7 @@ final class AppCoordinator: ObservableObject {
     // MARK: - Comments
 
     @Published var commentsByPostCID: [String: [Comment]] = [:]
+    @Published var reactionsByPostCID: [String: [String: [String]]] = [:]
 
     func sendComment(text: String, targetCID: String) {
         guard let state = appState else { return }
