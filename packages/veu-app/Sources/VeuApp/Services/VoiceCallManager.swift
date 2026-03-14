@@ -72,16 +72,30 @@ public final class VoiceCallManager: ObservableObject {
 
     #if os(iOS)
     private func setupCallKitCallbacks() {
-        callKitManager.onAnswerCall = { [weak self] uuid in
+        callKitManager.onAnswerCall = { [weak self] callID in
             self?.performAccept()
         }
-        callKitManager.onEndCall = { [weak self] uuid in
-            self?.endCall()
+        callKitManager.onEndCall = { [weak self] callID in
+            guard let self = self else { return }
+            // Only end call if the CallKit callID matches our current call
+            let currentCallID: String?
+            switch self.state {
+            case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+                currentCallID = id
+            default:
+                currentCallID = nil
+            }
+            if let current = currentCallID, current == callID {
+                print("[VoiceCall] CallKit ended current call: \(callID.prefix(8))")
+                self.endCall()
+            } else {
+                print("[VoiceCall] CallKit ended stale/unknown call: \(callID.prefix(8)), ignoring")
+            }
         }
         callKitManager.onAudioSessionActivated = { [weak self] in
             guard let self = self else { return }
             print("[VoiceCall] 🔊 CallKit audio session activated")
-            if let pending = self.pendingActive {
+            if self.pendingActive != nil {
                 self.pendingActive = nil
                 self.startAudioPipeline()
             }
@@ -102,8 +116,12 @@ public final class VoiceCallManager: ObservableObject {
         isOutgoingCall = true
         callKitActive = false
         setupUDP()
-        // CallKit outgoing — non-fatal if it fails
-        callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID)
+        callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID) { [weak self] error in
+            if error == nil {
+                self?.callKitActive = true
+                print("[VoiceCall] CallKit outgoing call registered")
+            }
+        }
         #endif
 
         var payload = GhostMessage.VoiceCallPayload(
@@ -519,20 +537,20 @@ public final class VoiceCallManager: ObservableObject {
         seenSignals.removeAll()
         pendingActive = nil
 
-        // Report to CallKit (only if it was tracking this call)
+        // Always clean up CallKit state to prevent stale calls
         #if os(iOS)
-        if callKitActive {
-            let callID: String?
-            switch state {
-            case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
-                callID = id
-            default:
-                callID = nil
-            }
-            if let callID = callID {
-                callKitManager.reportCallEnded(callID: callID, reason: reason == "Declined" ? .declinedElsewhere : .remoteEnded)
-            }
+        let callID: String?
+        switch state {
+        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+            callID = id
+        default:
+            callID = nil
         }
+        if let callID = callID {
+            callKitManager.reportCallEnded(callID: callID, reason: reason == "Declined" ? .declinedElsewhere : .remoteEnded)
+        }
+        // Force-clear any remaining stale UUIDs
+        callKitManager.clearAllCalls()
         isOutgoingCall = false
         callKitActive = false
         #endif

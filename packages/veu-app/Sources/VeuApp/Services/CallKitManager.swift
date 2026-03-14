@@ -15,9 +15,9 @@ public final class CallKitManager: NSObject, ObservableObject {
     private let callController = CXCallController()
 
     /// Called when user answers incoming call via CallKit UI.
-    public var onAnswerCall: ((UUID) -> Void)?
-    /// Called when user ends call via CallKit UI.
-    public var onEndCall: ((UUID) -> Void)?
+    public var onAnswerCall: ((String) -> Void)?
+    /// Called when CallKit ends a call — passes the callID string (not UUID).
+    public var onEndCall: ((String) -> Void)?
     /// Called when audio session should be configured.
     public var onAudioSessionActivated: (() -> Void)?
     /// Called when audio session is deactivated.
@@ -27,9 +27,10 @@ public final class CallKitManager: NSObject, ObservableObject {
     private var callUUIDs: [String: UUID] = [:]
 
     public override init() {
-        let config = CXProviderConfiguration(localizedName: "Veu")
+        let config = CXProviderConfiguration()
         config.supportsVideo = false
         config.maximumCallGroups = 1
+        config.maximumCallsPerCallGroup = 1
         config.supportedHandleTypes = [.generic]
         config.includesCallsInRecents = false  // Privacy: don't leak call history
         self.provider = CXProvider(configuration: config)
@@ -44,9 +45,6 @@ public final class CallKitManager: NSObject, ObservableObject {
     // MARK: - Report Incoming Call
 
     /// Report an incoming call to the system (shows native call UI).
-    /// - Parameters:
-    ///   - callID: The voice call's unique identifier string.
-    ///   - callerName: Display name for the caller.
     public func reportIncomingCall(callID: String, callerName: String, completion: ((Error?) -> Void)? = nil) {
         let uuid = uuidFor(callID: callID)
         let update = CXCallUpdate()
@@ -58,9 +56,10 @@ public final class CallKitManager: NSObject, ObservableObject {
         update.supportsHolding = false
         update.supportsDTMF = false
 
-        provider.reportNewIncomingCall(with: uuid, update: update) { error in
+        provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error = error {
                 print("[CallKit] Failed to report incoming call: \(error)")
+                self?.callUUIDs.removeValue(forKey: callID)
             }
             completion?(error)
         }
@@ -69,18 +68,18 @@ public final class CallKitManager: NSObject, ObservableObject {
     // MARK: - Outgoing Call
 
     /// Start an outgoing call via CallKit.
-    public func startOutgoingCall(callID: String, recipientName: String) {
+    public func startOutgoingCall(callID: String, recipientName: String, completion: ((Error?) -> Void)? = nil) {
         let uuid = uuidFor(callID: callID)
         let handle = CXHandle(type: .generic, value: recipientName)
         let startAction = CXStartCallAction(call: uuid, handle: handle)
         startAction.isVideo = false
 
-        callController.request(CXTransaction(action: startAction)) { error in
+        callController.request(CXTransaction(action: startAction)) { [weak self] error in
             if let error = error {
                 print("[CallKit] Failed to start outgoing call: \(error)")
-                return
+                self?.callUUIDs.removeValue(forKey: callID)
             }
-            // Mark the call as connected when the peer answers
+            completion?(error)
         }
     }
 
@@ -106,7 +105,6 @@ public final class CallKitManager: NSObject, ObservableObject {
     // MARK: - Answer Call from In-App UI
 
     /// Answer a call via CallKit (use when user taps Accept in our UI).
-    /// This triggers the CXProvider delegate → didActivate audio session.
     public func answerCall(callID: String) {
         guard let uuid = callUUIDs[callID] else { return }
         let answerAction = CXAnswerCallAction(call: uuid)
@@ -122,6 +120,19 @@ public final class CallKitManager: NSObject, ObservableObject {
         guard let uuid = callUUIDs[callID] else { return }
         provider.reportCall(with: uuid, endedAt: Date(), reason: reason)
         callUUIDs.removeValue(forKey: callID)
+    }
+
+    /// Force-clear all tracked calls (use on cleanup to prevent stale state).
+    public func clearAllCalls() {
+        for (callID, uuid) in callUUIDs {
+            provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+        }
+        callUUIDs.removeAll()
+    }
+
+    /// Look up callID for a given UUID.
+    public func callID(for uuid: UUID) -> String? {
+        callUUIDs.first(where: { $0.value == uuid })?.key
     }
 
     // MARK: - Private
@@ -144,19 +155,16 @@ extension CallKitManager: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        let callID = callUUIDs.first(where: { $0.value == action.callUUID })?.key
-        if let callID = callID {
-            onAnswerCall?(action.callUUID)
-            _ = callID  // Keep for logging if needed
+        if let callID = callID(for: action.callUUID) {
+            onAnswerCall?(callID)
         }
         action.fulfill()
     }
 
     public func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        let callID = callUUIDs.first(where: { $0.value == action.callUUID })?.key
-        onEndCall?(action.callUUID)
-        if let callID = callID {
+        if let callID = callID(for: action.callUUID) {
             callUUIDs.removeValue(forKey: callID)
+            onEndCall?(callID)
         }
         action.fulfill()
     }
@@ -166,7 +174,6 @@ extension CallKitManager: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        // VoiceCallManager handles mute state directly
         action.fulfill()
     }
 
