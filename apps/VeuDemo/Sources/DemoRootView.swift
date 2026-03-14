@@ -718,8 +718,8 @@ struct NewDMPickerView: View {
                 } else {
                     ForEach(otherMembers) { member in
                         Button {
-                            // Open or create DM with this member
-                            coordinator.activeConversationID = member.id
+                            // Create DM conversation if it doesn't exist yet
+                            coordinator.openOrCreateDM(peerDeviceID: member.id, peerCallsign: member.callsign)
                             isPresented = false
                         } label: {
                             HStack(spacing: 12) {

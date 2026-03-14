@@ -525,6 +525,21 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    /// Open an existing DM or create a new (empty) one and navigate to it.
+    func openOrCreateDM(peerDeviceID: String, peerCallsign: String) {
+        if !conversations.contains(where: { $0.id == peerDeviceID }) {
+            let dm = Conversation(
+                id: peerDeviceID,
+                type: .dm(peerDeviceID: peerDeviceID, peerCallsign: peerCallsign),
+                lastMessage: nil,
+                lastTimestamp: nil,
+                unreadCount: 0
+            )
+            conversations.append(dm)
+        }
+        activeConversationID = peerDeviceID
+    }
+
     /// Messages filtered for the active conversation.
     var activeConversationMessages: [ChatMessage] {
         guard let convID = activeConversationID else { return chatMessages }
