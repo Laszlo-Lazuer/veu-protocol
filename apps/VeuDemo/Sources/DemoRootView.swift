@@ -694,10 +694,16 @@ struct NewDMPickerView: View {
     @ObservedObject var coordinator: AppCoordinator
     @Binding var isPresented: Bool
 
+    /// Circle members excluding the local user.
+    private var otherMembers: [AppCoordinator.CircleMember] {
+        let myID = appState.identity.deviceID
+        return coordinator.circleMembers.filter { $0.id != myID }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                if coordinator.circleMembers.isEmpty {
+                if otherMembers.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "person.2.slash")
                             .font(.system(size: 36))
@@ -710,7 +716,7 @@ struct NewDMPickerView: View {
                     .padding(.vertical, 24)
                     .listRowBackground(Color.clear)
                 } else {
-                    ForEach(coordinator.circleMembers) { member in
+                    ForEach(otherMembers) { member in
                         Button {
                             // Open or create DM with this member
                             coordinator.activeConversationID = member.id
