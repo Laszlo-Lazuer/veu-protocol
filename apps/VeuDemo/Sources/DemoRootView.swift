@@ -719,7 +719,7 @@ struct DemoTimelineTab: View {
     
     @ViewBuilder
     private func revealableCard(entry: TimelineEntry, height: CGFloat, seedColor: SIMD3<Float>) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .topLeading) {
             // Content layer
             Group {
                 if let data = entry.plaintextData,
@@ -768,22 +768,22 @@ struct DemoTimelineTab: View {
             }
             .frame(height: height)
             
-            // Sender info overlay (shown when revealed)
+            // Sender info pill
             if let callsign = entry.senderCallsign {
-                HStack(spacing: 8) {
-                    // Mini-Aura avatar
+                HStack(spacing: 6) {
                     AuraView(seedColor: seedColor, pulse: 0.0)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 24, height: 24)
                         .clipShape(Circle())
                     
                     Text(callsign)
-                        .font(.caption.bold())
+                        .font(.caption2.bold())
                         .foregroundColor(.white)
                 }
-                .padding(12)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(.ultraThinMaterial)
                 .clipShape(Capsule())
-                .padding(12)
+                .padding(10)
             }
         }
         .frame(height: height)
