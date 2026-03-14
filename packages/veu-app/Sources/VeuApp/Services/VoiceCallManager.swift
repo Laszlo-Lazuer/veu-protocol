@@ -45,6 +45,7 @@ public final class VoiceCallManager: ObservableObject {
     private let codec = AudioCodec()
     private var udpSocket: VoiceUDPSocket?
     private var peerUDPConnected = false
+    public let callKitManager = CallKitManager()
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
@@ -54,10 +55,38 @@ public final class VoiceCallManager: ObservableObject {
     /// Peer's UDP addresses from signaling (for connecting after accept).
     private var peerAudioAddresses: [String] = []
     private var peerAudioUDPPort: UInt16 = 0
+    /// Pending active transition — deferred until CallKit activates audio session.
+    private var pendingActive: (callID: String, peerDevice: String, peerCallsign: String)?
 
     private static let ringTimeout: TimeInterval = 30
 
-    public init() {}
+    public init() {
+        #if os(iOS)
+        setupCallKitCallbacks()
+        #endif
+    }
+
+    #if os(iOS)
+    private func setupCallKitCallbacks() {
+        callKitManager.onAnswerCall = { [weak self] uuid in
+            self?.performAccept()
+        }
+        callKitManager.onEndCall = { [weak self] uuid in
+            self?.endCall()
+        }
+        callKitManager.onAudioSessionActivated = { [weak self] in
+            guard let self = self else { return }
+            print("[VoiceCall] 🔊 CallKit audio session activated")
+            if let pending = self.pendingActive {
+                self.pendingActive = nil
+                self.startAudioPipeline()
+            }
+        }
+        callKitManager.onAudioSessionDeactivated = { [weak self] in
+            print("[VoiceCall] 🔇 CallKit audio session deactivated")
+        }
+    }
+    #endif
 
     // MARK: - Outgoing Call (1:1)
 
@@ -67,6 +96,7 @@ public final class VoiceCallManager: ObservableObject {
 
         #if os(iOS)
         setupUDP()
+        callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID)
         #endif
 
         var payload = GhostMessage.VoiceCallPayload(
@@ -109,10 +139,31 @@ public final class VoiceCallManager: ObservableObject {
             callerCallsign: payload.senderCallsign
         )
         startRingTimer(callID: payload.callID)
+
+        // Report to CallKit — shows native incoming call UI on lock screen
+        #if os(iOS)
+        callKitManager.reportIncomingCall(
+            callID: payload.callID,
+            callerName: payload.senderCallsign
+        )
+        #endif
     }
 
     /// Accept the incoming call.
+    /// When called from our UI, routes through CallKit so iOS properly activates
+    /// the audio session (CallKit's onAnswerCall callback calls performAccept).
     public func acceptCall() {
+        guard case .incomingRinging(let callID, _, _) = state else { return }
+        #if os(iOS)
+        // Route through CallKit → triggers CXAnswerCallAction → onAnswerCall → performAccept
+        callKitManager.answerCall(callID: callID)
+        #else
+        performAccept()
+        #endif
+    }
+
+    /// Actually perform the accept — called from CallKit's onAnswerCall callback.
+    private func performAccept() {
         guard case .incomingRinging(let callID, let callerDevice, let callerCallsign) = state else { return }
         cancelRingTimer()
 
@@ -356,12 +407,28 @@ public final class VoiceCallManager: ObservableObject {
 
     private func transitionToActive(callID: String, peerDevice: String, peerCallsign: String) {
         state = .active(callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
-        startAudioPipeline()
         callStartTime = Date()
         durationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let start = self?.callStartTime else { return }
             self?.callDuration = Date().timeIntervalSince(start)
         }
+
+        #if os(iOS)
+        // Report connected to CallKit and defer audio start until
+        // CallKit activates the audio session (didActivate callback).
+        callKitManager.reportOutgoingCallConnected(callID: callID)
+        pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+
+        // Fallback: if CallKit doesn't activate quickly, start audio anyway
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self, self.pendingActive != nil else { return }
+            print("[VoiceCall] ⏰ CallKit audio activation timeout — starting audio directly")
+            self.pendingActive = nil
+            self.startAudioPipeline()
+        }
+        #else
+        startAudioPipeline()
+        #endif
     }
 
     private func startAudioPipeline() {
@@ -421,6 +488,22 @@ public final class VoiceCallManager: ObservableObject {
         callDuration = 0
         sequenceNumber = 0
         seenSignals.removeAll()
+        pendingActive = nil
+
+        // Report to CallKit
+        #if os(iOS)
+        let callID: String?
+        switch state {
+        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+            callID = id
+        default:
+            callID = nil
+        }
+        if let callID = callID {
+            callKitManager.reportCallEnded(callID: callID, reason: reason == "Declined" ? .declinedElsewhere : .remoteEnded)
+        }
+        #endif
+
         peerAudioAddresses = []
         peerAudioUDPPort = 0
         #if os(iOS)

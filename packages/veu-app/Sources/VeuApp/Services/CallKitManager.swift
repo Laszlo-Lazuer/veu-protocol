@@ -103,6 +103,20 @@ public final class CallKitManager: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Answer Call from In-App UI
+
+    /// Answer a call via CallKit (use when user taps Accept in our UI).
+    /// This triggers the CXProvider delegate → didActivate audio session.
+    public func answerCall(callID: String) {
+        guard let uuid = callUUIDs[callID] else { return }
+        let answerAction = CXAnswerCallAction(call: uuid)
+        callController.request(CXTransaction(action: answerAction)) { error in
+            if let error = error {
+                print("[CallKit] Failed to answer call: \(error)")
+            }
+        }
+    }
+
     /// Report that a call ended (remote hangup or error).
     public func reportCallEnded(callID: String, reason: CXCallEndedReason) {
         guard let uuid = callUUIDs[callID] else { return }
