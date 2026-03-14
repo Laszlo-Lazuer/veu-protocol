@@ -439,7 +439,10 @@ struct ChatTab: View {
                                 Image(systemName: "arrow.up.circle.fill")
                                     .font(.system(size: 32))
                                     .foregroundColor(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
                             .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                         .padding(.horizontal)
@@ -697,7 +700,7 @@ struct DemoTimelineTab: View {
             entry.glazeSeedColor.b
         )
         
-        VStack(spacing: 0) {
+        VStack(spacing: 8) {
             // Check if this is a targeted post the user can't reveal (FOMO skeleton)
             if entry.isTargeted && !entry.canReveal {
                 fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
@@ -729,6 +732,7 @@ struct DemoTimelineTab: View {
                             .scaledToFill()
                             .frame(height: payload.caption != nil ? height - 48 : height)
                             .clipped()
+                            .contentShape(Rectangle())
                             .onTapGesture { fullscreenImage = uiImage }
                         if let caption = payload.caption {
                             Text(caption)
@@ -745,6 +749,7 @@ struct DemoTimelineTab: View {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
+                        .contentShape(Rectangle())
                         .onTapGesture { fullscreenImage = uiImage }
                 } else if let data = entry.plaintextData,
                           let text = String(data: data, encoding: .utf8) {
@@ -874,15 +879,18 @@ struct TimelineInteractionBar: View {
     var body: some View {
         VStack(spacing: 0) {
             // Reaction + comment action row
-            HStack(spacing: 16) {
+            HStack(spacing: 20) {
                 Button {
                     showReactionPicker.toggle()
                     HapticEngine.vueHum()
                 } label: {
                     Image(systemName: "face.smiling")
-                        .font(.body)
+                        .font(.title3)
                         .foregroundColor(.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
 
                 Button {
                     withAnimation(.spring(response: 0.3)) {
@@ -891,19 +899,22 @@ struct TimelineInteractionBar: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "bubble.left")
-                            .font(.body)
+                            .font(.title3)
                         if !comments.isEmpty {
                             Text("\(comments.count)")
                                 .font(.caption2.bold())
                         }
                     }
                     .foregroundColor(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
 
                 Spacer()
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 4)
 
             // Reaction picker
             if showReactionPicker {
@@ -951,9 +962,12 @@ struct TimelineInteractionBar: View {
                             HapticEngine.vueHum()
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
-                                .font(.title3)
+                                .font(.title2)
                                 .foregroundColor(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .padding(.horizontal, 16)
