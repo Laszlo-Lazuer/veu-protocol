@@ -26,6 +26,8 @@ final class AppCoordinator: ObservableObject {
     @Published var auraColorHex: String?
     @Published var timelineEntries: [TimelineEntry] = []
     @Published var chatMessages: [ChatMessage] = []
+    @Published var conversations: [Conversation] = []
+    @Published var activeConversationID: String?
     @Published var networkRunning = false
     @Published var syncedCount = 0
     @Published var networkError: String?
@@ -373,22 +375,22 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - Chat
 
-    func sendMessage(_ text: String) {
+    func sendMessage(_ text: String, recipientDeviceID: String? = nil) {
         guard let state = appState else { return }
         let vm = timelineVM ?? TimelineViewModel(appState: state)
         timelineVM = vm
         do {
-            // Encode message with sender metadata
             let chatPayload = ChatPayload(
                 text: text,
                 sender: state.identity.callsign,
-                timestamp: Date().timeIntervalSince1970
+                timestamp: Date().timeIntervalSince1970,
+                recipientDeviceID: recipientDeviceID
             )
             let data = try JSONEncoder().encode(chatPayload)
-            let result = try vm.compose(data: data, artifactType: "message")
+            let targets: [String]? = recipientDeviceID.map { [$0] }
+            let result = try vm.compose(data: data, artifactType: "message", targetRecipients: targets)
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
-            // Sync to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
                 node.recordLocalArtifact()
             }
@@ -433,8 +435,17 @@ final class AppCoordinator: ObservableObject {
                         sender: "Unknown",
                         timestamp: Date(),
                         isMe: false,
+                        conversationID: state.activeCircleID ?? "unknown",
                         reactions: reactionsByCID[entry.cid] ?? [:]
                     )
+                }
+                // Determine conversation: DM uses peer device ID, circle chat uses circle ID
+                let convID: String
+                if let recipient = payload.recipientDeviceID {
+                    // DM: conversation keyed by the *other* party
+                    convID = payload.sender == myCallsign ? recipient : (entry.senderCallsign ?? payload.sender)
+                } else {
+                    convID = state.activeCircleID ?? "unknown"
                 }
                 return ChatMessage(
                     id: entry.cid,
@@ -442,10 +453,64 @@ final class AppCoordinator: ObservableObject {
                     sender: payload.sender,
                     timestamp: Date(timeIntervalSince1970: payload.timestamp),
                     isMe: payload.sender == myCallsign,
+                    conversationID: convID,
                     reactions: reactionsByCID[entry.cid] ?? [:]
                 )
             }
             .sorted { $0.timestamp < $1.timestamp }
+
+        // Build conversations from messages
+        buildConversations(circleID: state.activeCircleID ?? "unknown", myCallsign: myCallsign)
+    }
+
+    /// Build conversation list from current chatMessages.
+    private func buildConversations(circleID: String, myCallsign: String) {
+        var convMap: [String: Conversation] = [:]
+
+        // Always include circle chat
+        convMap[circleID] = Conversation(
+            id: circleID,
+            type: .circle,
+            lastMessage: nil,
+            lastTimestamp: nil,
+            unreadCount: 0
+        )
+
+        for msg in chatMessages {
+            let convID = msg.conversationID
+            if convMap[convID] == nil {
+                let convType: Conversation.ConversationType
+                if convID == circleID {
+                    convType = .circle
+                } else {
+                    // DM — the convID is the peer's callsign or device ID
+                    convType = .dm(peerDeviceID: convID, peerCallsign: msg.isMe ? convID : msg.sender)
+                }
+                convMap[convID] = Conversation(
+                    id: convID,
+                    type: convType,
+                    lastMessage: nil,
+                    lastTimestamp: nil,
+                    unreadCount: 0
+                )
+            }
+            // Update last message (messages are sorted chronologically)
+            convMap[convID]?.lastMessage = msg.text
+            convMap[convID]?.lastTimestamp = msg.timestamp
+        }
+
+        // Sort: circle first, then DMs by most recent
+        conversations = convMap.values.sorted { a, b in
+            if case .circle = a.type { return true }
+            if case .circle = b.type { return false }
+            return (a.lastTimestamp ?? .distantPast) > (b.lastTimestamp ?? .distantPast)
+        }
+    }
+
+    /// Messages filtered for the active conversation.
+    var activeConversationMessages: [ChatMessage] {
+        guard let convID = activeConversationID else { return chatMessages }
+        return chatMessages.filter { $0.conversationID == convID }
     }
 
     // MARK: - Reactions

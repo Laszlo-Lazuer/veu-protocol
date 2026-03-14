@@ -37,6 +37,9 @@ public enum GhostMessage: Codable, Equatable {
     /// Acknowledge receipt of an artifact or burn notice.
     case ack(AckPayload)
 
+    /// Voice call signaling (offer, answer, end, room management).
+    case voiceCall(VoiceCallPayload)
+
     // MARK: - Payloads
 
     public struct SyncRequestPayload: Codable, Equatable {
@@ -84,10 +87,12 @@ public enum GhostMessage: Codable, Equatable {
         public var originDeviceID: String
         /// Optional burn-after timestamp.
         public var burnAfter: Int?
+        /// Optional target recipients (device IDs). nil = broadcast to all circle members.
+        public var targetRecipients: [String]?
 
         public init(cid: String, circleID: String, artifactType: String,
                     encryptedMeta: Data, sequence: UInt64, originDeviceID: String,
-                    burnAfter: Int? = nil) {
+                    burnAfter: Int? = nil, targetRecipients: [String]? = nil) {
             self.cid = cid
             self.circleID = circleID
             self.artifactType = artifactType
@@ -95,6 +100,7 @@ public enum GhostMessage: Codable, Equatable {
             self.sequence = sequence
             self.originDeviceID = originDeviceID
             self.burnAfter = burnAfter
+            self.targetRecipients = targetRecipients
         }
     }
 
@@ -122,6 +128,49 @@ public enum GhostMessage: Codable, Equatable {
         public init(cid: String, deviceID: String) {
             self.cid = cid
             self.deviceID = deviceID
+        }
+    }
+
+    public struct VoiceCallPayload: Codable, Equatable {
+        public enum Action: String, Codable, Equatable {
+            // 1:1 call signaling
+            case offer          // Caller → callee: incoming call
+            case answer         // Callee → caller: accept/reject
+            case end            // Either party: terminate call
+            // Circle voice room
+            case roomOpen       // Announce a new voice room
+            case roomJoin       // Peer joining the room
+            case roomLeave      // Peer leaving the room
+        }
+
+        /// Unique call or room identifier.
+        public var callID: String
+        /// The action being signaled.
+        public var action: Action
+        /// Device sending this signal.
+        public var senderDeviceID: String
+        /// Sender's callsign for display.
+        public var senderCallsign: String
+        /// Target device (1:1 calls only).
+        public var recipientDeviceID: String?
+        /// Circle ID (room calls).
+        public var circleID: String?
+        /// Whether the call was accepted (answer action only).
+        public var accepted: Bool?
+        /// End reason (end action only).
+        public var reason: String?
+
+        public init(callID: String, action: Action, senderDeviceID: String,
+                    senderCallsign: String, recipientDeviceID: String? = nil,
+                    circleID: String? = nil, accepted: Bool? = nil, reason: String? = nil) {
+            self.callID = callID
+            self.action = action
+            self.senderDeviceID = senderDeviceID
+            self.senderCallsign = senderCallsign
+            self.recipientDeviceID = recipientDeviceID
+            self.circleID = circleID
+            self.accepted = accepted
+            self.reason = reason
         }
     }
 
