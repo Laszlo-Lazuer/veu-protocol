@@ -53,17 +53,16 @@ func New(path string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	migrations := []string{
+	// Phase 1: create base tables (columns may evolve — keep the original schema).
+	baseSchema := []string{
 		`CREATE TABLE IF NOT EXISTS artifacts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			cid TEXT NOT NULL UNIQUE,
 			topic_hash TEXT NOT NULL,
 			payload BLOB NOT NULL,
-			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-			burn_after INTEGER
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_topic_created ON artifacts (topic_hash, created_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_artifacts_burn_after ON artifacts (burn_after) WHERE burn_after IS NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS push_tokens (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			topic_hash TEXT NOT NULL,
@@ -74,14 +73,17 @@ func (s *Store) migrate() error {
 		)`,
 	}
 
-	for _, m := range migrations {
+	for _, m := range baseSchema {
 		if _, err := s.db.Exec(m); err != nil {
 			return fmt.Errorf("exec migration: %w", err)
 		}
 	}
 
-	// Add burn_after column to existing databases that lack it.
+	// Phase 2: add columns that may not exist yet (ALTER TABLE is a no-op if column present).
 	s.db.Exec(`ALTER TABLE artifacts ADD COLUMN burn_after INTEGER`)
+
+	// Phase 3: indexes that depend on columns added in phase 2.
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_burn_after ON artifacts (burn_after) WHERE burn_after IS NOT NULL`)
 
 	return nil
 }
