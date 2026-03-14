@@ -391,8 +391,10 @@ struct ChatTab: View {
                             ScrollView {
                                 LazyVStack(spacing: 8) {
                                     ForEach(coordinator.chatMessages) { msg in
-                                        ChatBubble(message: msg)
-                                            .id(msg.id)
+                                        ChatBubble(message: msg) { emoji in
+                                            coordinator.sendReaction(emoji: emoji, targetCID: msg.id)
+                                        }
+                                        .id(msg.id)
                                     }
                                 }
                                 .padding(.horizontal)
@@ -458,6 +460,10 @@ struct ChatTab: View {
 
 struct ChatBubble: View {
     let message: ChatMessage
+    var onReaction: ((String) -> Void)?
+    @State private var showReactionPicker = false
+
+    private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
 
     var body: some View {
         HStack {
@@ -474,16 +480,100 @@ struct ChatBubble: View {
                 Text(message.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(message.isMe ? Color.green : Color(.systemGray5))
                     .foregroundColor(message.isMe ? .white : .primary)
+                    .background(
+                        BubbleView(isSent: message.isMe, cornerRadius: 18)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .onLongPressGesture(minimumDuration: 0.3) {
+                        showReactionPicker = true
+                        HapticEngine.vueHum()
+                    }
+
+                // Reaction badges
+                if !message.reactions.isEmpty {
+                    ReactionBadgeRow(reactions: message.reactions) { emoji in
+                        onReaction?(emoji)
+                    }
+                }
 
                 Text(message.timestamp, style: .time)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
+            .overlay(alignment: message.isMe ? .topTrailing : .topLeading) {
+                if showReactionPicker {
+                    ReactionPicker(emojis: Self.reactionEmojis) { emoji in
+                        showReactionPicker = false
+                        onReaction?(emoji)
+                    }
+                    .offset(y: -44)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
 
             if !message.isMe { Spacer(minLength: 60) }
+        }
+        .animation(.spring(response: 0.25), value: showReactionPicker)
+        .onTapGesture {
+            if showReactionPicker { showReactionPicker = false }
+        }
+    }
+}
+
+// MARK: - Reaction Picker
+
+struct ReactionPicker: View {
+    let emojis: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(emojis, id: \.self) { emoji in
+                Button {
+                    onSelect(emoji)
+                } label: {
+                    Text(emoji)
+                        .font(.title2)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+    }
+}
+
+// MARK: - Reaction Badge Row
+
+struct ReactionBadgeRow: View {
+    let reactions: [String: [String]]
+    let onTap: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(reactions.sorted(by: { $0.key < $1.key }), id: \.key) { emoji, senders in
+                Button {
+                    onTap(emoji)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(emoji)
+                            .font(.caption)
+                        if senders.count > 1 {
+                            Text("\(senders.count)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color(.systemGray5))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }
@@ -582,11 +672,20 @@ struct DemoTimelineTab: View {
             entry.glazeSeedColor.b
         )
         
-        // Check if this is a targeted post the user can't reveal (FOMO skeleton)
-        if entry.isTargeted && !entry.canReveal {
-            fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
-        } else {
-            revealableCard(entry: entry, height: height, seedColor: seedColor)
+        VStack(spacing: 0) {
+            // Check if this is a targeted post the user can't reveal (FOMO skeleton)
+            if entry.isTargeted && !entry.canReveal {
+                fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
+            } else {
+                revealableCard(entry: entry, height: height, seedColor: seedColor)
+            }
+            
+            // Interaction bar (reactions + comment toggle)
+            TimelineInteractionBar(
+                entry: entry,
+                comments: coordinator.commentsByPostCID[entry.cid] ?? [],
+                coordinator: coordinator
+            )
         }
     }
     
@@ -732,6 +831,113 @@ struct DemoTimelineTab: View {
             return h
         }
         return String(format: "%08X", UInt32(truncatingIfNeeded: hash >> 32))
+    }
+}
+
+// MARK: - Timeline Interaction Bar
+
+struct TimelineInteractionBar: View {
+    let entry: TimelineEntry
+    let comments: [Comment]
+    @ObservedObject var coordinator: AppCoordinator
+    @State private var showReactionPicker = false
+    @State private var showComments = false
+    @State private var commentText = ""
+
+    private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Reaction + comment action row
+            HStack(spacing: 16) {
+                Button {
+                    showReactionPicker.toggle()
+                    HapticEngine.vueHum()
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                }
+
+                Button {
+                    withAnimation(.spring(response: 0.3)) {
+                        showComments.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.left")
+                            .font(.body)
+                        if !comments.isEmpty {
+                            Text("\(comments.count)")
+                                .font(.caption2.bold())
+                        }
+                    }
+                    .foregroundColor(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            // Reaction picker
+            if showReactionPicker {
+                ReactionPicker(emojis: Self.reactionEmojis) { emoji in
+                    showReactionPicker = false
+                    coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
+                }
+                .padding(.bottom, 8)
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            // Comment section
+            if showComments {
+                VStack(spacing: 8) {
+                    ForEach(comments) { comment in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(comment.sender)
+                                .font(.caption2.bold())
+                                .foregroundColor(.secondary)
+                            Text(comment.text)
+                                .font(.caption)
+                            Spacer()
+                            Text(comment.timestamp, style: .relative)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
+                    // Comment input
+                    HStack(spacing: 8) {
+                        TextField("Comment…", text: $commentText)
+                            .textFieldStyle(.plain)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color(.systemGray6))
+                            .clipShape(Capsule())
+
+                        Button {
+                            let text = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else { return }
+                            coordinator.sendComment(text: text, targetCID: entry.cid)
+                            commentText = ""
+                            HapticEngine.vueHum()
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title3)
+                                .foregroundColor(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                        }
+                        .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.25), value: showReactionPicker)
     }
 }
 
