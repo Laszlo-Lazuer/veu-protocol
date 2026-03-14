@@ -503,6 +503,7 @@ struct ChatBubble: View {
                         radius: 16, x: 0, y: 0)
                     .fixedSize(horizontal: false, vertical: true)
                     .onLongPressGesture(minimumDuration: 0.3) {
+                        guard !message.isMe else { return }
                         showReactionPicker = true
                         HapticEngine.vueHum()
                     }
