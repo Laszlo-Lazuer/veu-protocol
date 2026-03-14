@@ -316,7 +316,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
             reloadCircleMembers()
         } catch {
@@ -360,7 +360,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             let result = try vm.compose(data: data, targetRecipients: targetRecipients, burnAfter: burnAfter)
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
             // Notify the mesh network so it can sync the new artifact to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
@@ -386,7 +386,7 @@ final class AppCoordinator: ObservableObject {
             )
             let data = try JSONEncoder().encode(chatPayload)
             let result = try vm.compose(data: data, artifactType: "message")
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
             // Sync to peers
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
@@ -403,20 +403,28 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" }
+            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
         } catch {
             print("Reload failed: \(error)")
             return
         }
 
-        // Filter to message-type entries and decode
+        // Collect reactions keyed by target CID
         let myCallsign = state.identity.callsign
+        let reactionsByCID = aggregateReactions(from: vm.entries)
+        reactionsByPostCID = reactionsByCID
+        commentsByPostCID = aggregateComments(from: vm.entries, myCallsign: myCallsign)
+
+        // Also attach reactions to timeline posts
+        timelineEntries = vm.entries
+            .filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
+
+        // Filter to message-type entries and decode
         chatMessages = vm.entries
             .filter { $0.artifactType == "message" }
             .compactMap { entry -> ChatMessage? in
                 guard let data = entry.plaintextData,
                       let payload = try? JSONDecoder().decode(ChatPayload.self, from: data) else {
-                    // Fallback: treat raw data as plain text
                     guard let data = entry.plaintextData,
                           let text = String(data: data, encoding: .utf8) else { return nil }
                     return ChatMessage(
@@ -424,7 +432,8 @@ final class AppCoordinator: ObservableObject {
                         text: text,
                         sender: "Unknown",
                         timestamp: Date(),
-                        isMe: false
+                        isMe: false,
+                        reactions: reactionsByCID[entry.cid] ?? [:]
                     )
                 }
                 return ChatMessage(
@@ -432,10 +441,127 @@ final class AppCoordinator: ObservableObject {
                     text: payload.text,
                     sender: payload.sender,
                     timestamp: Date(timeIntervalSince1970: payload.timestamp),
-                    isMe: payload.sender == myCallsign
+                    isMe: payload.sender == myCallsign,
+                    reactions: reactionsByCID[entry.cid] ?? [:]
                 )
             }
             .sorted { $0.timestamp < $1.timestamp }
+    }
+
+    // MARK: - Reactions
+
+    func sendReaction(emoji: String, targetCID: String) {
+        guard let state = appState else { return }
+        let vm = timelineVM ?? TimelineViewModel(appState: state)
+        timelineVM = vm
+        do {
+            let payload = ReactionPayload(
+                emoji: emoji,
+                targetCID: targetCID,
+                sender: state.identity.callsign,
+                timestamp: Date().timeIntervalSince1970
+            )
+            let data = try JSONEncoder().encode(payload)
+            _ = try vm.compose(data: data, artifactType: "reaction")
+            reloadChat()
+            if let node = networkService?.meshNode {
+                node.recordLocalArtifact()
+            }
+        } catch {
+            print("Send reaction failed: \(error)")
+        }
+    }
+
+    // MARK: - Comments
+
+    @Published var commentsByPostCID: [String: [Comment]] = [:]
+    @Published var reactionsByPostCID: [String: [String: [String]]] = [:]
+
+    func sendComment(text: String, targetCID: String) {
+        guard let state = appState else { return }
+        let vm = timelineVM ?? TimelineViewModel(appState: state)
+        timelineVM = vm
+        do {
+            let payload = CommentPayload(
+                text: text,
+                sender: state.identity.callsign,
+                targetCID: targetCID,
+                timestamp: Date().timeIntervalSince1970
+            )
+            let data = try JSONEncoder().encode(payload)
+            _ = try vm.compose(data: data, artifactType: "comment")
+            reloadChat()
+            if let node = networkService?.meshNode {
+                node.recordLocalArtifact()
+            }
+        } catch {
+            print("Send comment failed: \(error)")
+        }
+    }
+
+    /// Aggregate reaction artifacts into a lookup: `targetCID → { emoji → [senders] }`.
+    /// Each sender keeps only their latest reaction per target. If their latest
+    /// reaction matches their previous one it's treated as a toggle-off (removed).
+    private func aggregateReactions(from entries: [TimelineEntry]) -> [String: [String: [String]]] {
+        // Collect all reactions sorted by timestamp (entries are already chronological)
+        struct R { let emoji: String; let sender: String; let target: String; let ts: TimeInterval }
+        var all: [R] = []
+        for entry in entries where entry.artifactType == "reaction" {
+            guard let data = entry.plaintextData,
+                  let payload = try? JSONDecoder().decode(ReactionPayload.self, from: data) else { continue }
+            all.append(R(emoji: payload.emoji, sender: payload.sender, target: payload.targetCID, ts: payload.timestamp))
+        }
+        all.sort { $0.ts < $1.ts }
+
+        // For each (target, sender) keep only the latest reaction.
+        // If the latest matches the previous → toggle off (nil).
+        // If different → replace with the new emoji.
+        var latest: [String: [String: (emoji: String?, prev: String?)]] = [:]  // target → sender → state
+        for r in all {
+            let current = latest[r.target]?[r.sender]
+            if current?.emoji == r.emoji {
+                // Same emoji again → toggle off
+                latest[r.target, default: [:]][r.sender] = (emoji: nil, prev: r.emoji)
+            } else {
+                // New or different emoji → set it
+                latest[r.target, default: [:]][r.sender] = (emoji: r.emoji, prev: current?.emoji)
+            }
+        }
+
+        // Build final result
+        var result: [String: [String: [String]]] = [:]
+        for (target, senders) in latest {
+            for (sender, state) in senders {
+                if let emoji = state.emoji {
+                    result[target, default: [:]][emoji, default: []].append(sender)
+                }
+            }
+        }
+        return result
+    }
+
+    /// Aggregate comment artifacts into a lookup: `targetCID → [Comment]`.
+    func aggregateComments(from entries: [TimelineEntry], myCallsign: String) -> [String: [Comment]] {
+        let reactionsByCID = aggregateReactions(from: entries)
+        var result: [String: [Comment]] = [:]
+        for entry in entries where entry.artifactType == "comment" {
+            guard let data = entry.plaintextData,
+                  let payload = try? JSONDecoder().decode(CommentPayload.self, from: data) else { continue }
+            let comment = Comment(
+                id: entry.cid,
+                text: payload.text,
+                sender: payload.sender,
+                timestamp: Date(timeIntervalSince1970: payload.timestamp),
+                isMe: payload.sender == myCallsign,
+                reactions: reactionsByCID[entry.cid] ?? [:]
+            )
+            result[payload.targetCID, default: []].append(comment)
+        }
+        // Sort each list by timestamp
+        for key in result.keys {
+            result[key]?.sort { $0.timestamp < $1.timestamp }
+        }
+        return result
     }
 
     // MARK: - Network

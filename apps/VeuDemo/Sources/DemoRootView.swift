@@ -1,4 +1,5 @@
 import SwiftUI
+import ImageIO
 import VeuApp
 import VeuGlaze
 import VeuAuth
@@ -391,8 +392,10 @@ struct ChatTab: View {
                             ScrollView {
                                 LazyVStack(spacing: 8) {
                                     ForEach(coordinator.chatMessages) { msg in
-                                        ChatBubble(message: msg)
-                                            .id(msg.id)
+                                        ChatBubble(message: msg, myCallsign: appState.identity.callsign) { emoji in
+                                            coordinator.sendReaction(emoji: emoji, targetCID: msg.id)
+                                        }
+                                        .id(msg.id)
                                     }
                                 }
                                 .padding(.horizontal)
@@ -437,7 +440,10 @@ struct ChatTab: View {
                                 Image(systemName: "arrow.up.circle.fill")
                                     .font(.system(size: 32))
                                     .foregroundColor(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
                             .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                         .padding(.horizontal)
@@ -458,6 +464,11 @@ struct ChatTab: View {
 
 struct ChatBubble: View {
     let message: ChatMessage
+    var myCallsign: String = ""
+    var onReaction: ((String) -> Void)?
+    @State private var showReactionPicker = false
+
+    private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
 
     var body: some View {
         HStack {
@@ -474,16 +485,134 @@ struct ChatBubble: View {
                 Text(message.text)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(message.isMe ? Color.green : Color(.systemGray5))
                     .foregroundColor(message.isMe ? .white : .primary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18)
+                            .fill(message.isMe
+                                ? Color(red: 0.22, green: 0.58, blue: 0.36)
+                                : Color(.systemGray5))
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6)
+                        : Color(white: 0.75).opacity(0.5),
+                        radius: 3, x: 0, y: 0)
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.35)
+                        : Color(white: 0.70).opacity(0.3),
+                        radius: 8, x: 0, y: 0)
+                    .shadow(color: message.isMe
+                        ? Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.15)
+                        : Color(white: 0.65).opacity(0.15),
+                        radius: 16, x: 0, y: 0)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .overlay(alignment: message.isMe ? .topLeading : .topTrailing) {
+                        if !message.reactions.isEmpty {
+                            ReactionBadgeRow(reactions: message.reactions, myCallsign: myCallsign) { emoji in
+                                onReaction?(emoji)
+                            }
+                            .fixedSize()
+                            .offset(x: message.isMe ? -8 : 8, y: -12)
+                        }
+                    }
+                    .onLongPressGesture(minimumDuration: 0.3) {
+                        guard !message.isMe else { return }
+                        showReactionPicker = true
+                        HapticEngine.vueHum()
+                    }
 
                 Text(message.timestamp, style: .time)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
+            .overlay(alignment: message.isMe ? .topTrailing : .topLeading) {
+                if showReactionPicker {
+                    ReactionPicker(emojis: Self.reactionEmojis) { emoji in
+                        showReactionPicker = false
+                        onReaction?(emoji)
+                    }
+                    .fixedSize()
+                    .offset(y: -44)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .background {
+                // Dismiss layer — covers full screen when picker is open
+                if showReactionPicker {
+                    Color.black.opacity(0.01)
+                        .ignoresSafeArea()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onTapGesture { showReactionPicker = false }
+                }
+            }
 
             if !message.isMe { Spacer(minLength: 60) }
+        }
+        .animation(.spring(response: 0.25), value: showReactionPicker)
+    }
+}
+
+// MARK: - Reaction Picker
+
+struct ReactionPicker: View {
+    let emojis: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(emojis, id: \.self) { emoji in
+                Button {
+                    onSelect(emoji)
+                } label: {
+                    Text(emoji)
+                        .font(.title2)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+    }
+}
+
+// MARK: - Reaction Badge Row
+
+struct ReactionBadgeRow: View {
+    let reactions: [String: [String]]
+    var myCallsign: String = ""
+    let onTap: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(reactions.sorted(by: { $0.key < $1.key }), id: \.key) { emoji, senders in
+                let isMine = senders.contains(myCallsign)
+                Button {
+                    onTap(emoji)
+                } label: {
+                    HStack(spacing: 1) {
+                        Text(emoji)
+                            .font(.caption2)
+                        if senders.count > 1 {
+                            Text("\(senders.count)")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(isMine ? Color(red: 0.22, green: 0.58, blue: 0.36).opacity(0.55) : Color(.systemGray3))
+                    .clipShape(Capsule())
+                    .overlay(
+                        isMine ? Capsule().stroke(Color(red: 0.31, green: 0.78, blue: 0.47).opacity(0.6), lineWidth: 1) : nil
+                    )
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }
@@ -582,17 +711,27 @@ struct DemoTimelineTab: View {
             entry.glazeSeedColor.b
         )
         
-        // Check if this is a targeted post the user can't reveal (FOMO skeleton)
-        if entry.isTargeted && !entry.canReveal {
-            fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
-        } else {
-            revealableCard(entry: entry, height: height, seedColor: seedColor)
+        VStack(spacing: 8) {
+            // Check if this is a targeted post the user can't reveal (FOMO skeleton)
+            if entry.isTargeted && !entry.canReveal {
+                fomoSkeletonCard(entry: entry, height: height, seedColor: seedColor)
+            } else {
+                revealableCard(entry: entry, height: height, seedColor: seedColor)
+            }
+            
+            // Interaction bar (reactions + comment toggle)
+            TimelineInteractionBar(
+                entry: entry,
+                comments: coordinator.commentsByPostCID[entry.cid] ?? [],
+                reactions: coordinator.reactionsByPostCID[entry.cid] ?? [:],
+                coordinator: coordinator
+            )
         }
     }
     
     @ViewBuilder
     private func revealableCard(entry: TimelineEntry, height: CGFloat, seedColor: SIMD3<Float>) -> some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack {
             // Content layer
             Group {
                 if let data = entry.plaintextData,
@@ -605,6 +744,7 @@ struct DemoTimelineTab: View {
                             .scaledToFill()
                             .frame(height: payload.caption != nil ? height - 48 : height)
                             .clipped()
+                            .contentShape(Rectangle())
                             .onTapGesture { fullscreenImage = uiImage }
                         if let caption = payload.caption {
                             Text(caption)
@@ -621,6 +761,7 @@ struct DemoTimelineTab: View {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
+                        .contentShape(Rectangle())
                         .onTapGesture { fullscreenImage = uiImage }
                 } else if let data = entry.plaintextData,
                           let text = String(data: data, encoding: .utf8) {
@@ -639,22 +780,43 @@ struct DemoTimelineTab: View {
             }
             .frame(height: height)
             
-            // Sender info overlay (shown when revealed)
-            if let callsign = entry.senderCallsign {
-                HStack(spacing: 8) {
-                    // Mini-Aura avatar
-                    AuraView(seedColor: seedColor, pulse: 0.0)
-                        .frame(width: 32, height: 32)
-                        .clipShape(Circle())
-                    
-                    Text(callsign)
-                        .font(.caption.bold())
-                        .foregroundColor(.white)
+            // Sender avatar + name — top left
+            VStack {
+                HStack {
+                    if let callsign = entry.senderCallsign {
+                        HStack(spacing: 6) {
+                            AuraView(seedColor: seedColor, pulse: 0.15)
+                                .frame(width: 28, height: 28)
+                                .clipShape(Circle())
+                            Text(callsign)
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial.opacity(0.8))
+                        .clipShape(Capsule())
+                        .padding(10)
+                    }
+                    Spacer()
                 }
-                .padding(12)
-                .background(.ultraThinMaterial)
-                .clipShape(Capsule())
-                .padding(12)
+                Spacer()
+                // Timestamp — bottom right
+                HStack {
+                    Spacer()
+                    if let date = entry.createdAt {
+                        Text(date, style: .relative)
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(.ultraThinMaterial.opacity(0.7))
+                            .clipShape(Capsule())
+                            .padding(10)
+                    }
+                }
             }
         }
         .frame(height: height)
@@ -735,6 +897,138 @@ struct DemoTimelineTab: View {
     }
 }
 
+// MARK: - Timeline Interaction Bar
+
+struct TimelineInteractionBar: View {
+    let entry: TimelineEntry
+    let comments: [Comment]
+    let reactions: [String: [String]]
+    @ObservedObject var coordinator: AppCoordinator
+    @State private var showReactionPicker = false
+    @State private var showComments = false
+    @State private var commentText = ""
+
+    private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
+
+    var body: some View {
+        VStack(spacing: 4) {
+            // Reaction badges (if any)
+            if !reactions.isEmpty {
+                HStack(spacing: 4) {
+                    ReactionBadgeRow(reactions: reactions, myCallsign: coordinator.appState?.identity.callsign ?? "") { emoji in
+                        coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+            }
+
+            // Reaction + comment action row
+            HStack(spacing: 20) {
+                Button {
+                    withAnimation(.spring(response: 0.25)) {
+                        showReactionPicker.toggle()
+                    }
+                    HapticEngine.vueHum()
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.spring(response: 0.3)) {
+                        showComments.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bubble.left")
+                            .font(.title3)
+                        if !comments.isEmpty {
+                            Text("\(comments.count)")
+                                .font(.caption2.bold())
+                        }
+                    }
+                    .foregroundColor(.secondary)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+
+            // Reaction picker
+            if showReactionPicker {
+                ReactionPicker(emojis: Self.reactionEmojis) { emoji in
+                    showReactionPicker = false
+                    coordinator.sendReaction(emoji: emoji, targetCID: entry.cid)
+                }
+                .fixedSize()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .transition(.scale.combined(with: .opacity))
+            }
+
+            // Comment section
+            if showComments {
+                VStack(spacing: 8) {
+                    ForEach(comments) { comment in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(comment.sender)
+                                .font(.caption2.bold())
+                                .foregroundColor(.secondary)
+                            Text(comment.text)
+                                .font(.caption)
+                            Spacer()
+                            Text(comment.timestamp, style: .relative)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
+                    // Comment input
+                    HStack(spacing: 8) {
+                        TextField("Comment…", text: $commentText)
+                            .textFieldStyle(.plain)
+                            .font(.caption)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color(.systemGray6))
+                            .clipShape(Capsule())
+
+                        Button {
+                            let text = commentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !text.isEmpty else { return }
+                            coordinator.sendComment(text: text, targetCID: entry.cid)
+                            commentText = ""
+                            HapticEngine.vueHum()
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .green)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.25), value: showReactionPicker)
+    }
+}
+
 // MARK: - Capture Sheet
 
 struct CaptureSheet: View {
@@ -789,8 +1083,10 @@ struct CaptureSheet: View {
                         .cornerRadius(12)
                     }
 
-                    if capturedData != nil {
-                        Label("Photo captured (\(capturedData!.count) bytes)", systemImage: "checkmark.circle.fill")
+                    if let raw = capturedData {
+                        let compressed = compressForSending(raw)
+                        Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(compressed.count))",
+                              systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                     }
 
@@ -963,7 +1259,86 @@ struct CaptureSheet: View {
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
-        return resized.jpegData(compressionQuality: 0.7) ?? rawData
+
+        // Anti-PRNU: random micro-crop (1-4px per edge) to break spatial alignment
+        let cropped = randomMicroCrop(resized)
+        // Anti-PRNU: inject subtle Gaussian noise to destroy sensor fingerprint
+        let noised = injectSensorNoise(cropped)
+
+        guard let jpegData = noised.jpegData(compressionQuality: 0.7) else { return rawData }
+        return stripMetadata(from: jpegData) ?? jpegData
+    }
+
+    /// Crop 1-4 random pixels from each edge to break PRNU spatial alignment.
+    private func randomMicroCrop(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let w = cg.width, h = cg.height
+        guard w > 16, h > 16 else { return image }
+        let top = Int.random(in: 1...4)
+        let left = Int.random(in: 1...4)
+        let bottom = Int.random(in: 1...4)
+        let right = Int.random(in: 1...4)
+        let rect = CGRect(x: left, y: top, width: w - left - right, height: h - top - bottom)
+        guard let cropped = cg.cropping(to: rect) else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    /// Add subtle Gaussian noise (σ≈2.5) to pixel values, destroying PRNU patterns.
+    private func injectSensorNoise(_ image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let w = cg.width, h = cg.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bytesPerRow = w * 4
+        var pixels = [UInt8](repeating: 0, count: h * bytesPerRow)
+        guard let ctx = CGContext(
+            data: &pixels, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        // Box-Muller Gaussian noise, σ ≈ 2.5 — invisible but breaks PRNU correlation
+        let sigma: Double = 2.5
+        let count = w * h * 4
+        var i = 0
+        while i < count {
+            // Skip alpha channel (every 4th byte)
+            for ch in 0..<3 {
+                let u1 = max(Double.random(in: 0..<1), 1e-10)
+                let u2 = Double.random(in: 0..<1)
+                let noise = sigma * (-2.0 * log(u1)).squareRoot() * cos(2.0 * .pi * u2)
+                let val = Double(pixels[i + ch]) + noise
+                pixels[i + ch] = UInt8(clamping: Int(val.rounded()))
+            }
+            i += 4
+        }
+
+        guard let noisedCG = ctx.makeImage() else { return image }
+        return UIImage(cgImage: noisedCG, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    /// Remove all EXIF/GPS/TIFF metadata from JPEG data for privacy.
+    private func stripMetadata(from data: Data) -> Data? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let uti = CGImageSourceGetType(source) else { return nil }
+        let mutableData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(mutableData, uti, 1, nil) else { return nil }
+        // Copy pixels but replace all metadata with an empty dictionary
+        CGImageDestinationAddImageFromSource(dest, source, 0, [
+            kCGImageDestinationMetadata: NSDictionary()
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return mutableData as Data
+    }
+
+    private func formatBytes(_ bytes: Int) -> String {
+        if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+        } else if bytes >= 1024 {
+            return String(format: "%.0f KB", Double(bytes) / 1024)
+        }
+        return "\(bytes) B"
     }
 
     private func sealContent() {
@@ -1144,16 +1519,23 @@ struct FullscreenImageViewer: View {
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
+    @State private var saved = false
+    @State private var dragOffset: CGFloat = 0
+
+    private var dismissProgress: CGFloat {
+        min(abs(dragOffset) / 200, 1.0)
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
+                .opacity(1.0 - dismissProgress * 0.5)
 
             Image(uiImage: image)
                 .resizable()
                 .scaledToFit()
                 .scaleEffect(scale)
-                .offset(offset)
+                .offset(x: offset.width, y: offset.height + (scale <= 1.0 ? dragOffset : 0))
                 .gesture(
                     MagnificationGesture()
                         .onChanged { value in
@@ -1176,10 +1558,20 @@ struct FullscreenImageViewer: View {
                                     width: lastOffset.width + value.translation.width,
                                     height: lastOffset.height + value.translation.height
                                 )
+                            } else {
+                                dragOffset = value.translation.height
                             }
                         }
                         .onEnded { value in
-                            lastOffset = offset
+                            if scale > 1.0 {
+                                lastOffset = offset
+                            } else {
+                                if abs(dragOffset) > 120 {
+                                    onDismiss()
+                                } else {
+                                    withAnimation(.spring(response: 0.3)) { dragOffset = 0 }
+                                }
+                            }
                         }
                 )
                 .onTapGesture(count: 2) {
@@ -1197,12 +1589,31 @@ struct FullscreenImageViewer: View {
                 }
         }
         .overlay(alignment: .topTrailing) {
-            Button { onDismiss() } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .padding()
+            HStack(spacing: 16) {
+                Button {
+                    UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                    saved = true
+                    HapticEngine.vueHum()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { saved = false }
+                } label: {
+                    Image(systemName: saved ? "checkmark.circle.fill" : "square.and.arrow.down.fill")
+                        .font(.title2)
+                        .foregroundStyle(saved ? .green : .white.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button { onDismiss() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
+            .padding()
         }
         .statusBarHidden()
     }

@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     --   'message'      — a direct or Circle text message (encrypted payload)
     --   'burn_notice'  — a tombstone record indicating a scheduled purge
     -- This column is used by the sync layer for routing, not for content analysis.
-    artifact_type  TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice')),
+    artifact_type  TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice', 'reaction', 'comment')),
 
     -- AES-256-GCM encrypted blob containing a JSON object with fields:
     --   { "size_bytes": <int>, "mime_hint": "<string>", "glaze_seed": "<hex>" }

@@ -36,6 +36,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Veu saves images to your photo library when you choose to download them.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Veu uses Face ID to authenticate before revealing protected content.</string>
 	<key>NSLocalNetworkUsageDescription</key>
