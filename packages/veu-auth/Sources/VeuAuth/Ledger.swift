@@ -61,10 +61,64 @@ public final class Ledger {
 
     // MARK: - Schema Bootstrap
 
-    /// Execute the LEDGER.sql schema to create all tables and indexes.
+    /// Execute the LEDGER.sql schema to create all tables and indexes,
+    /// then run any needed migrations for existing databases.
     private func bootstrap() throws {
         let schema = Ledger.schemaSQL
         try execute(schema)
+        try migrateArtifactTypes()
+    }
+
+    /// Migrate existing databases whose artifacts CHECK constraint is missing
+    /// the 'reaction' and 'comment' types added in v3.
+    private func migrateArtifactTypes() throws {
+        // Check the CREATE TABLE sql to see if 'reaction' is already allowed.
+        let tableSql: [String] = try query(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='artifacts'"
+        ) { stmt in
+            String(cString: sqlite3_column_text(stmt, 0))
+        }
+        guard let createSql = tableSql.first else { return }
+        if createSql.contains("'reaction'") { return }
+
+        let migration = """
+            PRAGMA foreign_keys = OFF;
+
+            CREATE TABLE artifacts_new (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                cid              TEXT    NOT NULL UNIQUE,
+                circle_id        TEXT    NOT NULL REFERENCES circles(circle_id) ON DELETE CASCADE,
+                artifact_type    TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice', 'reaction', 'comment')),
+                encrypted_meta   BLOB    NOT NULL,
+                sender_id        TEXT,
+                target_recipients TEXT,
+                wrapped_keys     TEXT,
+                sync_state       TEXT    NOT NULL DEFAULT 'pending'
+                                         CHECK (sync_state IN ('pending', 'synced', 'purged')),
+                created_at       INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                synced_at        INTEGER,
+                purged_at        INTEGER,
+                burn_after       INTEGER
+            );
+
+            INSERT INTO artifacts_new SELECT * FROM artifacts;
+            DROP TABLE artifacts;
+            ALTER TABLE artifacts_new RENAME TO artifacts;
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_circle_created
+                ON artifacts (circle_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_sync_state
+                ON artifacts (sync_state) WHERE sync_state != 'purged';
+            CREATE INDEX IF NOT EXISTS idx_artifacts_burn_after
+                ON artifacts (burn_after) WHERE burn_after IS NOT NULL AND sync_state != 'purged';
+            CREATE INDEX IF NOT EXISTS idx_artifacts_created_at
+                ON artifacts (created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_artifacts_circle_active
+                ON artifacts (circle_id, created_at DESC) WHERE sync_state != 'purged';
+
+            PRAGMA foreign_keys = ON;
+            """
+        try execute(migration)
     }
 
     // MARK: - Circle Operations
@@ -456,7 +510,7 @@ public final class Ledger {
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             cid              TEXT    NOT NULL UNIQUE,
             circle_id        TEXT    NOT NULL REFERENCES circles(circle_id) ON DELETE CASCADE,
-            artifact_type    TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice')),
+            artifact_type    TEXT    NOT NULL CHECK (artifact_type IN ('post', 'file', 'message', 'burn_notice', 'reaction', 'comment')),
             encrypted_meta   BLOB    NOT NULL,
             sender_id        TEXT,
             target_recipients TEXT,
