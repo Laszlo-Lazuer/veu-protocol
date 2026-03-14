@@ -35,22 +35,25 @@ public final class VoiceCallManager: ObservableObject {
     public var deviceID: String = ""
     public var callsign: String = ""
 
-    /// Send a voice signal to a peer via the Ghost Network.
+    /// Send a voice signal to a peer via the Ghost Network (TCP).
     public var sendSignal: ((GhostMessage.VoiceCallPayload) -> Void)?
-    /// Send encrypted audio frame data to the active peer(s).
+    /// Send audio frame via TCP fallback (used when UDP unavailable).
     public var sendAudioFrame: ((Data) -> Void)?
 
     #if os(iOS)
     private let audioEngine = AudioEngine()
     private let codec = AudioCodec()
-    private let jitterBuffer = JitterBuffer()
+    private var udpSocket: VoiceUDPSocket?
+    private var peerUDPConnected = false
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
     private var durationTimer: Timer?
     private var callStartTime: Date?
-    /// Tracks recently seen signaling messages to deduplicate relay echoes.
     private var seenSignals: Set<String> = []
+    /// Peer's UDP addresses from signaling (for connecting after accept).
+    private var peerAudioAddresses: [String] = []
+    private var peerAudioUDPPort: UInt16 = 0
 
     private static let ringTimeout: TimeInterval = 30
 
@@ -61,13 +64,22 @@ public final class VoiceCallManager: ObservableObject {
     /// Initiate a 1:1 call to a specific peer.
     public func startCall(to recipientDeviceID: String) -> String {
         let callID = UUID().uuidString
-        let payload = GhostMessage.VoiceCallPayload(
+
+        #if os(iOS)
+        setupUDP()
+        #endif
+
+        var payload = GhostMessage.VoiceCallPayload(
             callID: callID,
             action: .offer,
             senderDeviceID: deviceID,
             senderCallsign: callsign,
             recipientDeviceID: recipientDeviceID
         )
+        #if os(iOS)
+        payload.audioUDPPort = udpSocket?.localPort
+        payload.audioAddresses = Self.localIPAddresses()
+        #endif
         sendSignal?(payload)
         state = .outgoingRinging(callID: callID, recipientDevice: recipientDeviceID)
         startRingTimer(callID: callID)
@@ -84,6 +96,11 @@ public final class VoiceCallManager: ObservableObject {
             return
         }
         print("[VoiceCall] 📞 Incoming call from \(payload.senderCallsign) (\(payload.senderDeviceID.prefix(8)))")
+
+        // Store peer's UDP info for when we accept
+        peerAudioAddresses = payload.audioAddresses ?? []
+        peerAudioUDPPort = payload.audioUDPPort ?? 0
+
         state = .incomingRinging(
             callID: payload.callID,
             callerDevice: payload.senderDeviceID,
@@ -97,7 +114,12 @@ public final class VoiceCallManager: ObservableObject {
         guard case .incomingRinging(let callID, let callerDevice, let callerCallsign) = state else { return }
         cancelRingTimer()
 
-        let payload = GhostMessage.VoiceCallPayload(
+        #if os(iOS)
+        setupUDP()
+        connectUDPToPeer()
+        #endif
+
+        var payload = GhostMessage.VoiceCallPayload(
             callID: callID,
             action: .answer,
             senderDeviceID: deviceID,
@@ -105,6 +127,10 @@ public final class VoiceCallManager: ObservableObject {
             recipientDeviceID: callerDevice,
             accepted: true
         )
+        #if os(iOS)
+        payload.audioUDPPort = udpSocket?.localPort
+        payload.audioAddresses = Self.localIPAddresses()
+        #endif
         sendSignal?(payload)
         transitionToActive(callID: callID, peerDevice: callerDevice, peerCallsign: callerCallsign)
     }
@@ -125,13 +151,19 @@ public final class VoiceCallManager: ObservableObject {
             return
         }
         guard payload.callID == callID else {
-            print("[VoiceCall] ⚠️ Ignoring answer — callID mismatch (expected: \(callID.prefix(8)), got: \(payload.callID.prefix(8)))")
+            print("[VoiceCall] ⚠️ Ignoring answer — callID mismatch")
             return
         }
         cancelRingTimer()
 
         if payload.accepted == true {
             print("[VoiceCall] ✅ Call answered by \(payload.senderCallsign)")
+            // Store peer's UDP info and connect
+            peerAudioAddresses = payload.audioAddresses ?? []
+            peerAudioUDPPort = payload.audioUDPPort ?? 0
+            #if os(iOS)
+            connectUDPToPeer()
+            #endif
             transitionToActive(callID: callID, peerDevice: payload.senderDeviceID, peerCallsign: payload.senderCallsign)
         } else {
             print("[VoiceCall] ❌ Call declined by peer")
@@ -332,12 +364,12 @@ public final class VoiceCallManager: ObservableObject {
     private func startAudioPipeline() {
         #if os(iOS)
         sequenceNumber = 0
-        jitterBuffer.reset()
         do {
             try audioEngine.start()
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
+            print("[VoiceCall] 🎙️ Audio pipeline started (UDP: \(peerUDPConnected ? "yes" : "no, TCP fallback"))")
         } catch {
             print("[VoiceCallManager] Failed to start audio: \(error)")
             endCallCleanup(reason: "Audio error")
@@ -356,7 +388,12 @@ public final class VoiceCallManager: ObservableObject {
         frame.append(compressed)
         sequenceNumber &+= 1
 
-        sendAudioFrame?(frame)
+        // Prefer UDP, fall back to TCP
+        if peerUDPConnected, let socket = udpSocket {
+            socket.sendFrame(frame)
+        } else {
+            sendAudioFrame?(frame)
+        }
         #endif
     }
 
@@ -381,13 +418,16 @@ public final class VoiceCallManager: ObservableObject {
         callDuration = 0
         sequenceNumber = 0
         seenSignals.removeAll()
+        peerAudioAddresses = []
+        peerAudioUDPPort = 0
         #if os(iOS)
         audioEngine.stop()
         audioEngine.onCapturedBuffer = nil
-        jitterBuffer.reset()
+        udpSocket?.stop()
+        udpSocket = nil
+        peerUDPConnected = false
         #endif
         state = .ended(reason: reason)
-        // Auto-transition back to idle after a brief delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             if case .ended = self?.state {
                 self?.state = .idle
@@ -405,5 +445,66 @@ public final class VoiceCallManager: ObservableObject {
     private func cancelRingTimer() {
         ringTimer?.invalidate()
         ringTimer = nil
+    }
+
+    // MARK: - UDP Audio Transport
+
+    #if os(iOS)
+    private func setupUDP() {
+        guard let key = circleKey else { return }
+        let socket = VoiceUDPSocket(circleKey: key)
+        socket.onFrameReceived = { [weak self] packet in
+            guard let self = self, let decrypted = socket.decryptFrame(packet) else { return }
+            self.handleReceivedAudioFrame(decrypted)
+        }
+        do {
+            try socket.startListening()
+            self.udpSocket = socket
+        } catch {
+            print("[VoiceCall] ⚠️ UDP listen failed: \(error), will use TCP fallback")
+        }
+    }
+
+    private func connectUDPToPeer() {
+        guard peerAudioUDPPort > 0, !peerAudioAddresses.isEmpty else {
+            print("[VoiceCall] No peer UDP info — using TCP fallback")
+            return
+        }
+        // Try first available address (prefer non-link-local IPv4)
+        let preferred = peerAudioAddresses.first { !$0.hasPrefix("fe80") } ?? peerAudioAddresses.first
+        guard let host = preferred else { return }
+
+        udpSocket?.connectToPeer(host: host, port: peerAudioUDPPort)
+        peerUDPConnected = true
+        print("[VoiceCall] 🔗 UDP connected to \(host):\(peerAudioUDPPort)")
+    }
+    #endif
+
+    /// Get this device's local IP addresses for UDP audio.
+    static func localIPAddresses() -> [String] {
+        var addresses: [String] = []
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return addresses }
+        defer { freeifaddrs(first) }
+
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let ifa = ptr {
+            let sa = ifa.pointee.ifa_addr.pointee
+            if sa.sa_family == UInt8(AF_INET) || sa.sa_family == UInt8(AF_INET6) {
+                let name = String(cString: ifa.pointee.ifa_name)
+                // Only include WiFi (en0) and cellular (pdp_ip) interfaces
+                if name == "en0" || name.hasPrefix("pdp_ip") {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    if getnameinfo(ifa.pointee.ifa_addr, socklen_t(sa.sa_len),
+                                   &hostname, socklen_t(hostname.count),
+                                   nil, 0, NI_NUMERICHOST) == 0 {
+                        let addr = String(cString: hostname)
+                        addresses.append(addr)
+                    }
+                }
+            }
+            ptr = ifa.pointee.ifa_next
+        }
+        return addresses
     }
 }

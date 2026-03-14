@@ -163,11 +163,16 @@ public enum GhostMessage: Codable, Equatable {
         public var reason: String?
         /// Encrypted audio frame data (audioFrame action only).
         public var audioFrameData: Data?
+        /// UDP port for direct audio transport (offer/answer only).
+        public var audioUDPPort: UInt16?
+        /// Sender's LAN IP addresses for UDP audio (offer/answer only).
+        public var audioAddresses: [String]?
 
         public init(callID: String, action: Action, senderDeviceID: String,
                     senderCallsign: String, recipientDeviceID: String? = nil,
                     circleID: String? = nil, accepted: Bool? = nil, reason: String? = nil,
-                    audioFrameData: Data? = nil) {
+                    audioFrameData: Data? = nil, audioUDPPort: UInt16? = nil,
+                    audioAddresses: [String]? = nil) {
             self.callID = callID
             self.action = action
             self.senderDeviceID = senderDeviceID
@@ -177,6 +182,8 @@ public enum GhostMessage: Codable, Equatable {
             self.accepted = accepted
             self.reason = reason
             self.audioFrameData = audioFrameData
+            self.audioUDPPort = audioUDPPort
+            self.audioAddresses = audioAddresses
         }
     }
 

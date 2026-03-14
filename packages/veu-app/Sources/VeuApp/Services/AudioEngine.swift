@@ -52,6 +52,12 @@ public final class AudioEngine {
         engine.attach(playerNode)
 
         let inputNode = engine.inputNode
+
+        // Enable voice processing: echo cancellation, noise suppression, AGC
+        if !inputNode.isVoiceProcessingEnabled {
+            try inputNode.setVoiceProcessingEnabled(true)
+        }
+
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
         // Connect player → main mixer for playback
