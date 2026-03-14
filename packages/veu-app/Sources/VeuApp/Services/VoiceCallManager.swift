@@ -473,21 +473,43 @@ public final class VoiceCallManager: ObservableObject {
             print("[VoiceCall] No peer UDP info — using TCP fallback")
             return
         }
-        // Try first available address (prefer non-link-local IPv4)
-        let preferred = peerAudioAddresses.first { !$0.hasPrefix("fe80") } ?? peerAudioAddresses.first
-        guard let host = preferred else { return }
+        // Prefer private LAN IPv4 (same subnet), then any private IPv4, then others
+        let host = Self.bestAddress(from: peerAudioAddresses)
+        guard let host else { return }
 
         udpSocket?.connectToPeer(host: host, port: peerAudioUDPPort)
         peerUDPConnected = true
         print("[VoiceCall] 🔗 UDP connected to \(host):\(peerAudioUDPPort)")
     }
+
+    /// Pick the best peer address: private IPv4 > ULA IPv6 > public IPv4 > link-local
+    static func bestAddress(from addresses: [String]) -> String? {
+        // 1. Private IPv4 (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+        if let priv = addresses.first(where: { Self.isPrivateIPv4($0) }) { return priv }
+        // 2. ULA IPv6 (fd00::/8)
+        if let ula = addresses.first(where: { $0.hasPrefix("fd") }) { return ula }
+        // 3. Any non-link-local address
+        if let other = addresses.first(where: { !$0.hasPrefix("fe80") }) { return other }
+        return addresses.first
+    }
+
+    private static func isPrivateIPv4(_ addr: String) -> Bool {
+        guard !addr.contains(":") else { return false } // skip IPv6
+        let parts = addr.split(separator: ".").compactMap { UInt8($0) }
+        guard parts.count == 4 else { return false }
+        if parts[0] == 10 { return true }
+        if parts[0] == 172 && (16...31).contains(parts[1]) { return true }
+        if parts[0] == 192 && parts[1] == 168 { return true }
+        return false
+    }
     #endif
 
-    /// Get this device's local IP addresses for UDP audio.
+    /// Get this device's local IP addresses for UDP audio (en0 first, then cellular).
     static func localIPAddresses() -> [String] {
-        var addresses: [String] = []
+        var wifiAddrs: [String] = []
+        var cellAddrs: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return addresses }
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
         defer { freeifaddrs(first) }
 
         var ptr: UnsafeMutablePointer<ifaddrs>? = first
@@ -495,19 +517,23 @@ public final class VoiceCallManager: ObservableObject {
             let sa = ifa.pointee.ifa_addr.pointee
             if sa.sa_family == UInt8(AF_INET) || sa.sa_family == UInt8(AF_INET6) {
                 let name = String(cString: ifa.pointee.ifa_name)
-                // Only include WiFi (en0) and cellular (pdp_ip) interfaces
                 if name == "en0" || name.hasPrefix("pdp_ip") {
                     var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                     if getnameinfo(ifa.pointee.ifa_addr, socklen_t(sa.sa_len),
                                    &hostname, socklen_t(hostname.count),
                                    nil, 0, NI_NUMERICHOST) == 0 {
                         let addr = String(cString: hostname)
-                        addresses.append(addr)
+                        if name == "en0" {
+                            wifiAddrs.append(addr)
+                        } else {
+                            cellAddrs.append(addr)
+                        }
                     }
                 }
             }
             ptr = ifa.pointee.ifa_next
         }
-        return addresses
+        // WiFi addresses first — peers on same LAN should connect via these
+        return wifiAddrs + cellAddrs
     }
 }
