@@ -39,7 +39,12 @@ final class AppCoordinator: ObservableObject {
     @Published var activeTransport: String = "Offline"
     @Published var relayURL: String = UserDefaults.standard.string(forKey: "veu.relayURL") ?? "" {
         didSet {
-            UserDefaults.standard.set(relayURL, forKey: "veu.relayURL")
+            let trimmed = relayURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                UserDefaults.standard.removeObject(forKey: "veu.relayURL")
+            } else {
+                UserDefaults.standard.set(trimmed, forKey: "veu.relayURL")
+            }
         }
     }
     @Published var sealError: String?
@@ -87,16 +92,29 @@ final class AppCoordinator: ObservableObject {
     private var networkService: NetworkService?
     private var proximitySession: ProximitySession?
     private var cancellables = Set<AnyCancellable>()
+    private var pendingRelayArtifacts: [String: String] = [:]
 
     // MARK: - Bootstrap
 
-    func bootstrap() {
+    func bootstrap(autoStartNetwork: Bool = true, requestNotifications: Bool = true) {
         do {
             let state = try AppState.bootstrap()
-            DispatchQueue.main.async {
+            let applyBootstrap = {
                 self.appState = state
+                self.reloadTimeline()
+                if requestNotifications {
+                    self.requestNotificationPermission()
+                }
+                if autoStartNetwork, state.activeCircleID != nil {
+                    self.startNetwork()
+                }
             }
-            requestNotificationPermission()
+
+            if Thread.isMainThread {
+                applyBootstrap()
+            } else {
+                DispatchQueue.main.sync(execute: applyBootstrap)
+            }
         } catch {
             print("Bootstrap failed: \(error)")
         }
@@ -274,9 +292,10 @@ final class AppCoordinator: ObservableObject {
             reloadTimeline()
             reloadCircleMembers()
             
-            // Restart network with the new circle key
-            try networkService?.restart()
-            networkLog.append("🔄 Network restarted with new circle")
+            // Bring the new circle online immediately after a successful handshake.
+            let shouldRestartNetwork = networkService?.isRunning == true || networkRunning
+            startNetwork(forceRestart: shouldRestartNetwork)
+            networkLog.append(shouldRestartNetwork ? "🔄 Network restarted with new circle" : "🟢 Network started for new circle")
             
             // Clean up proximity session
             proximitySession?.stop()
@@ -380,6 +399,7 @@ final class AppCoordinator: ObservableObject {
         timelineVM = vm
         do {
             let result = try vm.compose(data: data, targetRecipients: targetRecipients, burnAfter: burnAfter)
+            trackRelayArtifact(cid: result.cid, kind: "post")
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
             // Notify the mesh network so it can sync the new artifact to peers
@@ -407,6 +427,7 @@ final class AppCoordinator: ObservableObject {
             let data = try JSONEncoder().encode(chatPayload)
             let targets: [String]? = recipientDeviceID.map { [$0] }
             let result = try vm.compose(data: data, artifactType: "message", targetRecipients: targets)
+            trackRelayArtifact(cid: result.cid, kind: "message")
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
             reloadChat()
             if let node = networkService?.meshNode, let circleID = state.activeCircleID {
@@ -560,7 +581,8 @@ final class AppCoordinator: ObservableObject {
                 timestamp: Date().timeIntervalSince1970
             )
             let data = try JSONEncoder().encode(payload)
-            _ = try vm.compose(data: data, artifactType: "reaction")
+            let result = try vm.compose(data: data, artifactType: "reaction")
+            trackRelayArtifact(cid: result.cid, kind: "reaction")
             reloadChat()
             if let node = networkService?.meshNode {
                 node.recordLocalArtifact()
@@ -587,7 +609,8 @@ final class AppCoordinator: ObservableObject {
                 timestamp: Date().timeIntervalSince1970
             )
             let data = try JSONEncoder().encode(payload)
-            _ = try vm.compose(data: data, artifactType: "comment")
+            let result = try vm.compose(data: data, artifactType: "comment")
+            trackRelayArtifact(cid: result.cid, kind: "comment")
             reloadChat()
             if let node = networkService?.meshNode {
                 node.recordLocalArtifact()
@@ -664,16 +687,34 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - Network
 
-    func startNetwork() {
+    func startNetwork(forceRestart: Bool = false) {
         guard let state = appState else { return }
-        let relay = relayURL.isEmpty ? nil : URL(string: relayURL)
+        if !forceRestart, let service = networkService, service.isRunning {
+            networkRunning = true
+            networkError = nil
+            activeTransport = service.activeTransport ?? activeTransport
+            return
+        }
+
+        if networkService != nil {
+            networkService?.stop()
+            networkService = nil
+        }
+
+        let trimmedRelay = relayURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let relay = RelayDefaults.effectiveRelayURL(from: relayURL) else {
+            networkError = "Invalid relay URL"
+            activeTransport = "Offline"
+            networkLog.append("🔴 Invalid relay URL: \(trimmedRelay)")
+            return
+        }
         let service = NetworkService(appState: state, relayURL: relay)
         networkService = service
 
-        service.onArtifactReceived = { [weak self] cid, circleID in
+        service.onArtifactReceived = { [weak self] cid, circleID, transport in
             DispatchQueue.main.async {
                 self?.syncedCount += 1
-                self?.networkLog.append("📥 Received artifact \(String(cid.prefix(8)))…")
+                self?.networkLog.append("📥 Received artifact \(String(cid.prefix(8)))… via \(transport)")
                 self?.reloadTimeline()
                 self?.notifyIfBackgrounded()
             }
@@ -713,15 +754,19 @@ final class AppCoordinator: ObservableObject {
             }
         }
 
+        service.onRelayDeliveryUpdated = { [weak self] update in
+            DispatchQueue.main.async {
+                self?.handleRelayDelivery(update)
+            }
+        }
+
         do {
             try service.start()
             networkRunning = true
             networkError = nil
             activeTransport = service.activeTransport ?? "Connecting…"
             networkLog.append("🟢 Mesh started (circle: \(state.activeCircleID?.prefix(8) ?? "?")…)")
-            if relay != nil {
-                networkLog.append("🌐 Relay: \(relayURL)")
-            }
+            networkLog.append("🌐 Relay: \(relay.absoluteString)")
         } catch {
             networkError = "\(error)"
             activeTransport = "Offline"
@@ -734,6 +779,29 @@ final class AppCoordinator: ObservableObject {
         networkService = nil
         networkRunning = false
         activeTransport = "Offline"
+    }
+
+    private func trackRelayArtifact(cid: String, kind: String) {
+        pendingRelayArtifacts[cid] = kind
+        if networkRunning {
+            networkLog.append("📤 Queued \(kind) \(String(cid.prefix(8)))… for relay sync")
+        }
+    }
+
+    private func handleRelayDelivery(_ update: RelayDeliveryUpdate) {
+        let cidPrefix = String(update.cid.prefix(8))
+        let kind = pendingRelayArtifacts.removeValue(forKey: update.cid) ?? "artifact"
+
+        switch update.status {
+        case .accepted:
+            networkLog.append("✅ Relay accepted \(kind) \(cidPrefix)…")
+        case .duplicate:
+            networkLog.append("ℹ️ Relay already had \(kind) \(cidPrefix)…")
+        case .rejected:
+            let detail = update.detail ?? "Unknown rejection"
+            networkLog.append("🔴 Relay rejected \(kind) \(cidPrefix)…: \(detail)")
+            sealError = "Relay rejected \(kind): \(detail)"
+        }
     }
 }
 
@@ -1007,7 +1075,7 @@ extension AppCoordinator: ProximitySessionDelegate {
     /// Handle a background app refresh task — lightweight delta check.
     static func handleBackgroundRefresh(_ task: BGAppRefreshTask) {
         let coordinator = AppCoordinator()
-        coordinator.bootstrap()
+        coordinator.bootstrap(autoStartNetwork: false, requestNotifications: false)
         guard coordinator.appState?.activeCircleID != nil else {
             task.setTaskCompleted(success: true)
             return
@@ -1017,21 +1085,30 @@ extension AppCoordinator: ProximitySessionDelegate {
             coordinator.stopNetwork()
         }
 
-        do {
-            try coordinator.networkService?.start()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
-                coordinator.stopNetwork()
-                task.setTaskCompleted(success: true)
-            }
-        } catch {
+        let startNetwork = {
+            coordinator.startNetwork()
+        }
+        if Thread.isMainThread {
+            startNetwork()
+        } else {
+            DispatchQueue.main.sync(execute: startNetwork)
+        }
+
+        guard coordinator.networkRunning else {
             task.setTaskCompleted(success: false)
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25) {
+            coordinator.stopNetwork()
+            task.setTaskCompleted(success: true)
         }
     }
 
     /// Handle a background processing task — full sync on Wi-Fi + charging.
     static func handleBackgroundProcessing(_ task: BGProcessingTask) {
         let coordinator = AppCoordinator()
-        coordinator.bootstrap()
+        coordinator.bootstrap(autoStartNetwork: false, requestNotifications: false)
         guard coordinator.appState?.activeCircleID != nil else {
             task.setTaskCompleted(success: true)
             return
@@ -1041,14 +1118,23 @@ extension AppCoordinator: ProximitySessionDelegate {
             coordinator.stopNetwork()
         }
 
-        do {
-            try coordinator.networkService?.start()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
-                coordinator.stopNetwork()
-                task.setTaskCompleted(success: true)
-            }
-        } catch {
+        let startNetwork = {
+            coordinator.startNetwork()
+        }
+        if Thread.isMainThread {
+            startNetwork()
+        } else {
+            DispatchQueue.main.sync(execute: startNetwork)
+        }
+
+        guard coordinator.networkRunning else {
             task.setTaskCompleted(success: false)
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            coordinator.stopNetwork()
+            task.setTaskCompleted(success: true)
         }
     }
 }

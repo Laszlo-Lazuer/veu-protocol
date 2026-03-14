@@ -33,13 +33,15 @@ func ValidateTopicHash(topic string) bool {
 // --- Wire protocol message types ---
 
 type IncomingMessage struct {
-	Type     string `json:"type"`
-	CID      string `json:"cid,omitempty"`
-	Topic    string `json:"topic,omitempty"`
-	Payload  string `json:"payload,omitempty"`
-	Since    int64  `json:"since,omitempty"`
-	Token    string `json:"token,omitempty"`
-	DeviceID string `json:"device_id,omitempty"`
+	Type      string `json:"type"`
+	CID       string `json:"cid,omitempty"`
+	Topic     string `json:"topic,omitempty"`
+	Payload   string `json:"payload,omitempty"`
+	Persist   *bool  `json:"persist,omitempty"`
+	BurnAfter *int64 `json:"burn_after,omitempty"`
+	Since     int64  `json:"since,omitempty"`
+	Token     string `json:"token,omitempty"`
+	DeviceID  string `json:"device_id,omitempty"`
 }
 
 type ArtifactNotify struct {
@@ -52,6 +54,14 @@ type ArtifactNotify struct {
 type PullResponse struct {
 	Type      string           `json:"type"`
 	Artifacts []store.Artifact `json:"artifacts"`
+}
+
+type ArtifactAck struct {
+	Type    string `json:"type"`
+	CID     string `json:"cid"`
+	Topic   string `json:"topic"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -205,6 +215,8 @@ func (h *Hub) readPump(ctx context.Context, c *Client) {
 		switch msg.Type {
 		case "artifact_push":
 			h.handleArtifactPush(ctx, c, &msg)
+		case "burn_notice":
+			h.handleBurnNotice(ctx, c, &msg)
 		case "pull_request":
 			h.handlePullRequest(ctx, c, &msg)
 		case "register_token":
@@ -248,35 +260,48 @@ func (h *Hub) writePump(ctx context.Context, c *Client) {
 
 func (h *Hub) handleArtifactPush(ctx context.Context, c *Client, msg *IncomingMessage) {
 	if msg.CID == "" || msg.Topic == "" || msg.Payload == "" {
-		h.sendError(ctx, c, "artifact_push requires cid, topic, and payload")
+		if msg.CID != "" {
+			h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "rejected", "artifact_push requires cid, topic, and payload")
+		} else {
+			h.sendError(ctx, c, "artifact_push requires cid, topic, and payload")
+		}
 		return
 	}
 	if !ValidateTopicHash(msg.Topic) {
-		h.sendError(ctx, c, "invalid topic hash")
+		h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "rejected", "invalid topic hash")
 		return
 	}
 	if msg.Topic != c.topic {
-		h.sendError(ctx, c, "topic mismatch with connection")
+		h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "rejected", "topic mismatch with connection")
 		return
 	}
 	if len(msg.Payload) > maxPayloadSize {
-		h.sendError(ctx, c, "payload exceeds maximum size")
+		h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "rejected", "payload exceeds maximum size")
 		return
 	}
 
-	inserted, err := h.store.InsertArtifact(ctx, msg.CID, msg.Topic, msg.Payload)
-	if err != nil {
-		slog.Error("store insert failed", "cid", msg.CID, "error", err)
-		h.sendError(ctx, c, "internal error")
-		return
+	persist := true
+	if msg.Persist != nil {
+		persist = *msg.Persist
 	}
 
-	if !inserted {
-		// Duplicate CID — already stored, skip broadcast.
-		return
-	}
+	if persist {
+		inserted, err := h.store.InsertArtifact(ctx, msg.CID, msg.Topic, msg.Payload, msg.BurnAfter)
+		if err != nil {
+			slog.Error("store insert failed", "cid", msg.CID, "error", err)
+			h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "rejected", "internal error")
+			return
+		}
 
-	slog.Info("artifact stored", "cid", msg.CID, "topic", msg.Topic)
+		if !inserted {
+			h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "duplicate", "artifact already stored")
+			return
+		}
+
+		slog.Info("artifact stored", "cid", msg.CID, "topic", msg.Topic)
+	} else {
+		slog.Info("ephemeral artifact accepted", "cid", msg.CID, "topic", msg.Topic)
+	}
 
 	// Broadcast to online peers.
 	notify := ArtifactNotify{
@@ -289,8 +314,14 @@ func (h *Hub) handleArtifactPush(ctx context.Context, c *Client, msg *IncomingMe
 	h.Broadcast(msg.Topic, c, data)
 
 	// Send APNs push to offline devices (exclude sender).
-	if h.pusher != nil {
+	if persist && h.pusher != nil {
 		go h.sendPushNotifications(ctx, msg.Topic, msg.CID, msg.DeviceID)
+	}
+
+	if persist {
+		h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "accepted", "artifact stored")
+	} else {
+		h.sendArtifactAck(ctx, c, msg.CID, msg.Topic, "accepted", "artifact broadcast without persistence")
 	}
 }
 
@@ -347,6 +378,58 @@ func (h *Hub) handleRegisterToken(ctx context.Context, c *Client, msg *IncomingM
 	slog.Info("push token registered", "topic", msg.Topic, "device_id", msg.DeviceID)
 }
 
+func (h *Hub) handleBurnNotice(ctx context.Context, c *Client, msg *IncomingMessage) {
+	if msg.CID == "" || msg.Topic == "" {
+		h.sendError(ctx, c, "burn_notice requires cid and topic")
+		return
+	}
+	if msg.Topic != c.topic {
+		h.sendError(ctx, c, "topic mismatch with connection")
+		return
+	}
+
+	if err := h.store.DeleteArtifact(ctx, msg.CID); err != nil {
+		slog.Error("burn_notice delete failed", "cid", msg.CID, "error", err)
+		h.sendError(ctx, c, "internal error")
+		return
+	}
+
+	slog.Info("artifact burned", "cid", msg.CID, "topic", msg.Topic)
+
+	// Broadcast the burn notice so other connected peers also purge it.
+	if msg.Payload != "" {
+		notify := ArtifactNotify{
+			Type:    "artifact_notify",
+			CID:     msg.CID,
+			Topic:   msg.Topic,
+			Payload: msg.Payload,
+		}
+		data, _ := json.Marshal(notify)
+		h.Broadcast(msg.Topic, c, data)
+	}
+}
+
+// StartPruner runs a background goroutine that periodically deletes expired artifacts.
+func (h *Hub) StartPruner(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pruned, err := h.store.PruneExpired(ctx)
+				if err != nil {
+					slog.Error("prune expired failed", "error", err)
+				} else if pruned > 0 {
+					slog.Info("pruned expired artifacts", "count", pruned)
+				}
+			}
+		}
+	}()
+}
+
 func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid, senderDeviceID string) {
 	tokens, err := h.store.GetPushTokens(ctx, topicHash)
 	if err != nil {
@@ -367,6 +450,21 @@ func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid, senderD
 func (h *Hub) sendError(ctx context.Context, c *Client, message string) {
 	resp := ErrorResponse{
 		Type:    "error",
+		Message: message,
+	}
+	data, _ := json.Marshal(resp)
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+func (h *Hub) sendArtifactAck(ctx context.Context, c *Client, cid, topic, status, message string) {
+	resp := ArtifactAck{
+		Type:    "artifact_ack",
+		CID:     cid,
+		Topic:   topic,
+		Status:  status,
 		Message: message,
 	}
 	data, _ := json.Marshal(resp)

@@ -20,6 +20,9 @@ import Crypto
 /// encrypted blobs and topic hashes — it is completely blind.
 public final class GlobalTransport: MeshTransportProtocol {
 
+    /// Must match the relay server's maxMessageSize (10 MB).
+    private static let maxMessageSize = 10 * 1024 * 1024
+
     // MARK: - MeshTransportProtocol
 
     public let name = "Global"
@@ -89,6 +92,7 @@ public final class GlobalTransport: MeshTransportProtocol {
 
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: wsURL)
+        task.maximumMessageSize = Self.maxMessageSize
         self.urlSession = session
         self.webSocketTask = task
 
@@ -104,6 +108,10 @@ public final class GlobalTransport: MeshTransportProtocol {
             topicHash: topicHash,
             endpointDesc: "relay:\(relayURL.host ?? "unknown")"
         )
+        conn.onRelayDeliveryUpdate = { [weak self] update in
+            guard let self = self else { return }
+            self.delegate?.transport(self, didUpdateRelayDelivery: update)
+        }
         self.relayConnection = conn
         delegate?.transport(self, didConnectPeer: conn)
 
@@ -195,6 +203,9 @@ public final class GlobalTransport: MeshTransportProtocol {
                 }
             }
 
+        case .artifactAck(let payload):
+            relayConnection?.handleRelayAck(payload)
+
         default:
             break
         }
@@ -244,6 +255,7 @@ public final class GlobalTransport: MeshTransportProtocol {
 /// Messages exchanged between the relay client and server.
 public enum RelayMessage: Codable {
     case artifactPush(ArtifactPushPayload)
+    case artifactAck(ArtifactAckPayload)
     case pullRequest(PullRequestPayload)
     case pullResponse(PullResponsePayload)
     case registerToken(RegisterTokenPayload)
@@ -253,11 +265,40 @@ public enum RelayMessage: Codable {
         public var cid: String
         public var topic: String
         public var payload: String // base64-encoded encrypted blob
+        public var persist: Bool?
+        public var burnAfter: Int?
 
-        public init(cid: String, topic: String, payload: String) {
+        private enum CodingKeys: String, CodingKey {
+            case cid, topic, payload, persist
+            case burnAfter = "burn_after"
+        }
+
+        public init(cid: String, topic: String, payload: String, persist: Bool? = nil, burnAfter: Int? = nil) {
             self.cid = cid
             self.topic = topic
             self.payload = payload
+            self.persist = persist
+            self.burnAfter = burnAfter
+        }
+    }
+
+    public struct ArtifactAckPayload: Codable {
+        public enum Status: String, Codable {
+            case accepted
+            case duplicate
+            case rejected
+        }
+
+        public var cid: String
+        public var topic: String
+        public var status: Status
+        public var message: String?
+
+        public init(cid: String, topic: String, status: Status, message: String? = nil) {
+            self.cid = cid
+            self.topic = topic
+            self.status = status
+            self.message = message
         }
     }
 
@@ -311,6 +352,7 @@ public enum RelayMessage: Codable {
 
         switch type {
         case "artifact_push": self = .artifactPush(try singleContainer.decode(ArtifactPushPayload.self))
+        case "artifact_ack": self = .artifactAck(try singleContainer.decode(ArtifactAckPayload.self))
         case "pull_request": self = .pullRequest(try singleContainer.decode(PullRequestPayload.self))
         case "pull_response": self = .pullResponse(try singleContainer.decode(PullResponsePayload.self))
         case "register_token": self = .registerToken(try singleContainer.decode(RegisterTokenPayload.self))
@@ -324,6 +366,9 @@ public enum RelayMessage: Codable {
         switch self {
         case .artifactPush(let p):
             try container.encode("artifact_push", forKey: .type)
+            try p.encode(to: encoder)
+        case .artifactAck(let p):
+            try container.encode("artifact_ack", forKey: .type)
             try p.encode(to: encoder)
         case .pullRequest(let p):
             try container.encode("pull_request", forKey: .type)

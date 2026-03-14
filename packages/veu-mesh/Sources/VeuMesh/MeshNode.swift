@@ -20,7 +20,7 @@ public protocol MeshNodeDelegate: AnyObject {
     func meshNode(_ node: MeshNode, didDisconnectPeer peerID: String)
 
     /// Called when an artifact is received.
-    func meshNode(_ node: MeshNode, didReceiveArtifact cid: String, circleID: String)
+    func meshNode(_ node: MeshNode, didReceiveArtifact cid: String, circleID: String, via transport: String)
 
     /// Called when a burn notice is processed.
     func meshNode(_ node: MeshNode, didProcessBurn cid: String, circleID: String)
@@ -33,6 +33,13 @@ public protocol MeshNodeDelegate: AnyObject {
 
     /// Called when a voice call signal is received.
     func meshNode(_ node: MeshNode, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload)
+
+    /// Called when the relay accepts, duplicates, or rejects a locally-sent artifact.
+    func meshNode(_ node: MeshNode, didUpdateRelayDelivery update: RelayDeliveryUpdate)
+}
+
+public extension MeshNodeDelegate {
+    func meshNode(_ node: MeshNode, didUpdateRelayDelivery update: RelayDeliveryUpdate) {}
 }
 
 /// Multi-transport mesh coordinator for the Ghost Network.
@@ -101,6 +108,7 @@ public final class MeshNode {
     }
     
     private let deviceName: String
+    private var resyncTimer: DispatchSourceTimer?
 
     // MARK: - Lifecycle
 
@@ -143,10 +151,14 @@ public final class MeshNode {
         guard started else {
             throw VeuMeshError.noTransportAvailable
         }
+
+        startResyncTimer()
     }
 
     /// Stop all transports and disconnect all peers.
     public func stop() {
+        resyncTimer?.cancel()
+        resyncTimer = nil
         for transport in transports {
             transport.stop()
         }
@@ -167,6 +179,25 @@ public final class MeshNode {
         let seq = ghostNode.syncEngine.recordLocalArtifact(circleID: circleID)
         resyncAllPeers()
         return seq
+    }
+
+    // MARK: - Periodic Resync
+
+    /// Interval between automatic resync sweeps (30 seconds).
+    private static let resyncInterval: TimeInterval = 30
+
+    /// Start a repeating timer that re-syncs with all connected peers.
+    /// Catches artifacts missed due to connection race conditions or
+    /// transient transport failures.
+    private func startResyncTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.resyncInterval, repeating: Self.resyncInterval)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.isRunning else { return }
+            self.ghostNode.resyncAllPeers()
+        }
+        timer.resume()
+        resyncTimer = timer
     }
 
     // MARK: - Push Token
@@ -202,13 +233,17 @@ extension MeshNode: MeshTransportDelegate {
     public func transport(_ transport: any MeshTransportProtocol, didDisconnectPeer peerID: String) {
         delegate?.meshNode(self, didDisconnectPeer: peerID)
     }
+
+    public func transport(_ transport: any MeshTransportProtocol, didUpdateRelayDelivery update: RelayDeliveryUpdate) {
+        delegate?.meshNode(self, didUpdateRelayDelivery: update)
+    }
 }
 
 // MARK: - SyncEngineDelegate
 
 extension MeshNode: SyncEngineDelegate {
-    public func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String) {
-        delegate?.meshNode(self, didReceiveArtifact: cid, circleID: circleID)
+    public func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String, via transport: String) {
+        delegate?.meshNode(self, didReceiveArtifact: cid, circleID: circleID, via: transport)
     }
 
     public func syncEngine(_ engine: SyncEngine, didProcessBurn cid: String, circleID: String) {

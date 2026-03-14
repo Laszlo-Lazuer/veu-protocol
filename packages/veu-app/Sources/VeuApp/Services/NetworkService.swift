@@ -36,7 +36,7 @@ public final class NetworkService {
     public var activeTransport: String? { meshNode?.activeTransportName }
 
     /// Callback invoked when a new artifact arrives via sync.
-    public var onArtifactReceived: ((String, String) -> Void)?
+    public var onArtifactReceived: ((String, String, String) -> Void)?
 
     /// Callback invoked when a burn notice is processed.
     public var onBurnProcessed: ((String, String) -> Void)?
@@ -55,6 +55,9 @@ public final class NetworkService {
 
     /// Callback invoked when a voice call signal is received.
     public var onVoiceCallReceived: ((GhostMessage.VoiceCallPayload) -> Void)?
+
+    /// Callback invoked when the relay reports delivery status for a local artifact.
+    public var onRelayDeliveryUpdated: ((RelayDeliveryUpdate) -> Void)?
 
     // MARK: - Configuration
 
@@ -136,9 +139,9 @@ extension NetworkService: MeshNodeDelegate {
         onPeerDisconnected?(peerID)
     }
 
-    public func meshNode(_ node: MeshNode, didReceiveArtifact cid: String, circleID: String) {
+    public func meshNode(_ node: MeshNode, didReceiveArtifact cid: String, circleID: String, via transport: String) {
         syncedArtifactCount += 1
-        onArtifactReceived?(cid, circleID)
+        onArtifactReceived?(cid, circleID, transport)
     }
 
     public func meshNode(_ node: MeshNode, didProcessBurn cid: String, circleID: String) {
@@ -155,5 +158,9 @@ extension NetworkService: MeshNodeDelegate {
 
     public func meshNode(_ node: MeshNode, didReceiveVoiceCall payload: GhostMessage.VoiceCallPayload) {
         onVoiceCallReceived?(payload)
+    }
+
+    public func meshNode(_ node: MeshNode, didUpdateRelayDelivery update: RelayDeliveryUpdate) {
+        onRelayDeliveryUpdated?(update)
     }
 }

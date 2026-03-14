@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -58,9 +59,11 @@ func (s *Store) migrate() error {
 			cid TEXT NOT NULL UNIQUE,
 			topic_hash TEXT NOT NULL,
 			payload BLOB NOT NULL,
-			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+			burn_after INTEGER
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_artifacts_topic_created ON artifacts (topic_hash, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_artifacts_burn_after ON artifacts (burn_after) WHERE burn_after IS NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS push_tokens (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			topic_hash TEXT NOT NULL,
@@ -76,14 +79,18 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("exec migration: %w", err)
 		}
 	}
+
+	// Add burn_after column to existing databases that lack it.
+	s.db.Exec(`ALTER TABLE artifacts ADD COLUMN burn_after INTEGER`)
+
 	return nil
 }
 
 // InsertArtifact stores an encrypted artifact. Returns false if the CID already exists (duplicate).
-func (s *Store) InsertArtifact(ctx context.Context, cid, topicHash, payload string) (bool, error) {
+func (s *Store) InsertArtifact(ctx context.Context, cid, topicHash, payload string, burnAfter *int64) (bool, error) {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO artifacts (cid, topic_hash, payload) VALUES (?, ?, ?)`,
-		cid, topicHash, payload,
+		`INSERT INTO artifacts (cid, topic_hash, payload, burn_after) VALUES (?, ?, ?, ?)`,
+		cid, topicHash, payload, burnAfter,
 	)
 	if err != nil {
 		// Handle UNIQUE constraint violation — artifact already stored.
@@ -94,6 +101,27 @@ func (s *Store) InsertArtifact(ctx context.Context, cid, topicHash, payload stri
 		return false, fmt.Errorf("insert artifact: %w", err)
 	}
 	return true, nil
+}
+
+// DeleteArtifact removes an artifact by CID. Used for burn notices.
+func (s *Store) DeleteArtifact(ctx context.Context, cid string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM artifacts WHERE cid = ?`, cid)
+	if err != nil {
+		return fmt.Errorf("delete artifact: %w", err)
+	}
+	return nil
+}
+
+// PruneExpired deletes all artifacts whose burn_after timestamp has passed.
+// Returns the number of rows deleted.
+func (s *Store) PruneExpired(ctx context.Context) (int64, error) {
+	now := time.Now().Unix()
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM artifacts WHERE burn_after IS NOT NULL AND burn_after <= ?`, now)
+	if err != nil {
+		return 0, fmt.Errorf("prune expired: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // GetArtifactsSince returns all artifacts for a topic since a given Unix timestamp.

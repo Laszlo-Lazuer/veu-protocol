@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func tempStore(t *testing.T) *Store {
@@ -36,7 +37,7 @@ func TestInsertAndRetrieveArtifact(t *testing.T) {
 	s := tempStore(t)
 	ctx := context.Background()
 
-	inserted, err := s.InsertArtifact(ctx, "cid-1", "topic-a", "encrypted-blob")
+	inserted, err := s.InsertArtifact(ctx, "cid-1", "topic-a", "encrypted-blob", nil)
 	if err != nil {
 		t.Fatalf("InsertArtifact() error = %v", err)
 	}
@@ -60,8 +61,8 @@ func TestDuplicateCIDIsSkipped(t *testing.T) {
 	s := tempStore(t)
 	ctx := context.Background()
 
-	s.InsertArtifact(ctx, "cid-dup", "topic-a", "blob-1")
-	inserted, err := s.InsertArtifact(ctx, "cid-dup", "topic-a", "blob-2")
+	s.InsertArtifact(ctx, "cid-dup", "topic-a", "blob-1", nil)
+	inserted, err := s.InsertArtifact(ctx, "cid-dup", "topic-a", "blob-2", nil)
 	if err != nil {
 		t.Fatalf("InsertArtifact() error = %v", err)
 	}
@@ -74,8 +75,8 @@ func TestArtifactsAreTopicScoped(t *testing.T) {
 	s := tempStore(t)
 	ctx := context.Background()
 
-	s.InsertArtifact(ctx, "cid-1", "topic-a", "blob-a")
-	s.InsertArtifact(ctx, "cid-2", "topic-b", "blob-b")
+	s.InsertArtifact(ctx, "cid-1", "topic-a", "blob-a", nil)
+	s.InsertArtifact(ctx, "cid-2", "topic-b", "blob-b", nil)
 
 	arts, _ := s.GetArtifactsSince(ctx, "topic-a", 0)
 	if len(arts) != 1 || arts[0].CID != "cid-1" {
@@ -135,5 +136,80 @@ func TestGetPushTokensEmpty(t *testing.T) {
 	}
 	if tokens != nil {
 		t.Errorf("expected nil for empty result, got %+v", tokens)
+	}
+}
+
+func TestInsertArtifactWithBurnAfter(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	burn := int64(time.Now().Unix() + 3600) // 1 hour from now
+	inserted, err := s.InsertArtifact(ctx, "cid-burn", "topic-a", "blob", &burn)
+	if err != nil {
+		t.Fatalf("InsertArtifact() error = %v", err)
+	}
+	if !inserted {
+		t.Error("expected inserted=true")
+	}
+
+	arts, _ := s.GetArtifactsSince(ctx, "topic-a", 0)
+	if len(arts) != 1 || arts[0].CID != "cid-burn" {
+		t.Fatalf("expected artifact cid-burn, got %+v", arts)
+	}
+}
+
+func TestPruneExpiredDeletesOldArtifacts(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	past := int64(time.Now().Unix() - 60) // expired 60s ago
+	future := int64(time.Now().Unix() + 3600)
+
+	s.InsertArtifact(ctx, "expired-1", "topic-a", "blob1", &past)
+	s.InsertArtifact(ctx, "alive-1", "topic-a", "blob2", &future)
+	s.InsertArtifact(ctx, "permanent", "topic-a", "blob3", nil) // no burn_after
+
+	pruned, err := s.PruneExpired(ctx)
+	if err != nil {
+		t.Fatalf("PruneExpired() error = %v", err)
+	}
+	if pruned != 1 {
+		t.Errorf("expected 1 pruned, got %d", pruned)
+	}
+
+	arts, _ := s.GetArtifactsSince(ctx, "topic-a", 0)
+	if len(arts) != 2 {
+		t.Fatalf("expected 2 remaining artifacts, got %d", len(arts))
+	}
+	for _, a := range arts {
+		if a.CID == "expired-1" {
+			t.Error("expired artifact should have been pruned")
+		}
+	}
+}
+
+func TestDeleteArtifact(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	s.InsertArtifact(ctx, "cid-del", "topic-a", "blob", nil)
+
+	if err := s.DeleteArtifact(ctx, "cid-del"); err != nil {
+		t.Fatalf("DeleteArtifact() error = %v", err)
+	}
+
+	arts, _ := s.GetArtifactsSince(ctx, "topic-a", 0)
+	if len(arts) != 0 {
+		t.Errorf("expected 0 artifacts after delete, got %d", len(arts))
+	}
+}
+
+func TestDeleteArtifactNonExistent(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	// Should not error on non-existent CID
+	if err := s.DeleteArtifact(ctx, "no-such-cid"); err != nil {
+		t.Fatalf("DeleteArtifact() error = %v", err)
 	}
 }

@@ -27,6 +27,8 @@ public struct TimelineEntry: Equatable {
     public let canReveal: Bool
     /// When the artifact was created (Unix epoch seconds).
     public let createdAt: Date?
+    /// Which transport delivered this artifact ("Local", "Mesh", "Global"), nil for own posts.
+    public let receivedVia: String?
 
     public static func == (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
         lhs.cid == rhs.cid
@@ -121,7 +123,8 @@ public final class TimelineViewModel {
                 senderCallsign: senderCallsign,
                 targetRecipients: detail.targetRecipients,
                 canReveal: canReveal,
-                createdAt: detail.createdAt.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+                createdAt: detail.createdAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                receivedVia: detail.receivedVia
             )
         }
     }

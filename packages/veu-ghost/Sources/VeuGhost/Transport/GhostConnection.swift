@@ -30,6 +30,9 @@ public final class GhostConnection: TransportConnection, @unchecked Sendable {
         "\(connection.endpoint)"
     }
 
+    /// The transport that delivered this connection.
+    public var transportName: String = "Local"
+
     /// Connection state changes are forwarded to this handler.
     public var stateHandler: ((NWConnection.State) -> Void)?
 

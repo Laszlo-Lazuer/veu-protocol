@@ -6,13 +6,13 @@ import VeuAuth
 
 /// Mock delegate that records sync events for assertion.
 final class MockSyncDelegate: SyncEngineDelegate {
-    var receivedArtifacts: [(cid: String, circleID: String)] = []
+    var receivedArtifacts: [(cid: String, circleID: String, transport: String)] = []
     var processedBurns: [(cid: String, circleID: String)] = []
     var completedSyncs: [String] = []
     var errors: [VeuGhostError] = []
 
-    func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String) {
-        receivedArtifacts.append((cid, circleID))
+    func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String, via transport: String) {
+        receivedArtifacts.append((cid, circleID, transport))
     }
 
     func syncEngine(_ engine: SyncEngine, didProcessBurn cid: String, circleID: String) {

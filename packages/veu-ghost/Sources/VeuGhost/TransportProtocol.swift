@@ -16,6 +16,9 @@ public protocol TransportConnection: AnyObject {
     /// A human-readable description of the remote endpoint (for logging).
     var endpointDescription: String { get }
 
+    /// Which transport delivered this connection ("Local", "Mesh", "Global").
+    var transportName: String { get }
+
     /// Encrypt and send a `GhostMessage` over this transport.
     func send(_ message: GhostMessage, completion: @escaping (Result<Void, VeuGhostError>) -> Void)
 

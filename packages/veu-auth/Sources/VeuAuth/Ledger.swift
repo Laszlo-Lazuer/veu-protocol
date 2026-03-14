@@ -67,6 +67,7 @@ public final class Ledger {
         let schema = Ledger.schemaSQL
         try execute(schema)
         try migrateArtifactTypes()
+        try migrateAddReceivedVia()
     }
 
     /// Migrate existing databases whose artifacts CHECK constraint is missing
@@ -98,10 +99,11 @@ public final class Ledger {
                 created_at       INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
                 synced_at        INTEGER,
                 purged_at        INTEGER,
-                burn_after       INTEGER
+                burn_after       INTEGER,
+                received_via     TEXT
             );
 
-            INSERT INTO artifacts_new SELECT * FROM artifacts;
+            INSERT INTO artifacts_new SELECT *, NULL FROM artifacts;
             DROP TABLE artifacts;
             ALTER TABLE artifacts_new RENAME TO artifacts;
 
@@ -119,6 +121,17 @@ public final class Ledger {
             PRAGMA foreign_keys = ON;
             """
         try execute(migration)
+    }
+
+    /// Add `received_via` column for existing databases that predate transport tagging.
+    private func migrateAddReceivedVia() throws {
+        let cols: [String] = try query(
+            "PRAGMA table_info(artifacts)"
+        ) { stmt in
+            String(cString: sqlite3_column_text(stmt, 1))
+        }
+        guard !cols.contains("received_via") else { return }
+        try execute("ALTER TABLE artifacts ADD COLUMN received_via TEXT")
     }
 
     // MARK: - Circle Operations
@@ -230,11 +243,12 @@ public final class Ledger {
         senderID: String? = nil,
         targetRecipients: String? = nil,
         wrappedKeys: String? = nil,
-        burnAfter: Int? = nil
+        burnAfter: Int? = nil,
+        receivedVia: String? = nil
     ) throws -> Int64 {
         let sql = """
-            INSERT INTO artifacts (cid, circle_id, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO artifacts (cid, circle_id, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after, received_via)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         var stmtPtr: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
@@ -269,6 +283,12 @@ public final class Ledger {
             sqlite3_bind_int64(stmt, 8, Int64(burnAfter))
         } else {
             sqlite3_bind_null(stmt, 8)
+        }
+
+        if let receivedVia = receivedVia {
+            sqlite3_bind_text(stmt, 9, (receivedVia as NSString).utf8String, -1, nil)
+        } else {
+            sqlite3_bind_null(stmt, 9)
         }
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -344,6 +364,7 @@ public final class Ledger {
         public let wrappedKeys: [String: String]?
         public let burnAfter: Int?
         public let createdAt: Int?
+        public let receivedVia: String?
     }
 
     /// Fetch full artifact details for sync.
@@ -352,7 +373,7 @@ public final class Ledger {
     /// - Returns: Array of ArtifactDetails.
     public func listArtifactDetails(circleID: String) throws -> [ArtifactDetails] {
         let sql = """
-            SELECT cid, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after, created_at
+            SELECT cid, artifact_type, encrypted_meta, sender_id, target_recipients, wrapped_keys, burn_after, created_at, received_via
             FROM artifacts
             WHERE circle_id = ? AND sync_state != 'purged'
             ORDER BY created_at DESC
@@ -393,6 +414,7 @@ public final class Ledger {
             
             let burnAfter: Int? = sqlite3_column_type(stmt, 6) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 6))
             let createdAt: Int? = sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : Int(sqlite3_column_int64(stmt, 7))
+            let receivedVia: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 8))
             
             results.append(ArtifactDetails(
                 cid: cid,
@@ -402,7 +424,8 @@ public final class Ledger {
                 targetRecipients: targetRecipients,
                 wrappedKeys: wrappedKeys,
                 burnAfter: burnAfter,
-                createdAt: createdAt
+                createdAt: createdAt,
+                receivedVia: receivedVia
             ))
         }
         return results
@@ -523,7 +546,8 @@ public final class Ledger {
             created_at       INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
             synced_at        INTEGER,
             purged_at        INTEGER,
-            burn_after       INTEGER
+            burn_after       INTEGER,
+            received_via     TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_artifacts_circle_created

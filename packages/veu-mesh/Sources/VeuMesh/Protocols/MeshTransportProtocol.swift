@@ -15,6 +15,24 @@ public enum MeshTransportState: Equatable {
     case failed(String)
 }
 
+public struct RelayDeliveryUpdate: Equatable, Sendable {
+    public enum Status: String, Equatable, Sendable {
+        case accepted
+        case duplicate
+        case rejected
+    }
+
+    public let cid: String
+    public let status: Status
+    public let detail: String?
+
+    public init(cid: String, status: Status, detail: String? = nil) {
+        self.cid = cid
+        self.status = status
+        self.detail = detail
+    }
+}
+
 /// Delegate for mesh transport lifecycle and data events.
 public protocol MeshTransportDelegate: AnyObject {
     /// Transport state changed.
@@ -25,6 +43,13 @@ public protocol MeshTransportDelegate: AnyObject {
 
     /// A peer connection was lost.
     func transport(_ transport: any MeshTransportProtocol, didDisconnectPeer peerID: String)
+
+    /// The relay reported whether a locally-sent artifact was accepted or rejected.
+    func transport(_ transport: any MeshTransportProtocol, didUpdateRelayDelivery update: RelayDeliveryUpdate)
+}
+
+public extension MeshTransportDelegate {
+    func transport(_ transport: any MeshTransportProtocol, didUpdateRelayDelivery update: RelayDeliveryUpdate) {}
 }
 
 /// A mesh transport that can discover peers and establish connections.

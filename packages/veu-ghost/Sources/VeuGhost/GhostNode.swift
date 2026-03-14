@@ -37,6 +37,11 @@ public final class GhostNode: @unchecked Sendable {
     /// Active peer connections keyed by endpoint description.
     private var connections: [String: any TransportConnection] = [:]
 
+    /// Number of active peer connections.
+    public var connectionCount: Int {
+        queue.sync { connections.count }
+    }
+
     /// Pending artifact counts per connection key for direct push tracking.
     private var pendingArtifactCount: [String: Int] = [:]
 
@@ -173,11 +178,12 @@ public final class GhostNode: @unchecked Sendable {
     }
 
     /// Re-sync with all currently connected peers (e.g., after sealing a new artifact).
-    /// Since the sync protocol has the responder push to the initiator, we directly
-    /// push our new artifacts and then ask the peer to sync back.
+    /// Pushes our artifacts and also sends a sync-request so the peer pushes back
+    /// anything we missed.
     public func resyncAllPeers() {
         queue.async { [weak self] in
             guard let self = self else { return }
+            guard !self.connections.isEmpty else { return }
             print("[GhostNode] resyncAllPeers: \(self.connections.count) connections")
             guard let details = try? self.syncEngine.ledger.listArtifactDetails(circleID: self.circleID) else { return }
             let localClock = self.syncEngine.clock(for: self.circleID)
@@ -206,11 +212,14 @@ public final class GhostNode: @unchecked Sendable {
                 conn.send(header) { [weak self] result in
                     guard let self = self else { return }
                     if case .failure(let error) = result {
-                        print("[GhostNode] Push header failed: \(error)")
+                        print("[GhostNode] Push header failed to \(key): \(error)")
                         return
                     }
                     self.syncEngine.pushArtifactsPublic(payloads, connection: conn, circleID: self.circleID, peerDeviceID: key)
                 }
+
+                // Also ask the peer for anything we're missing (bidirectional catch-up).
+                self.syncEngine.initiateSync(circleID: self.circleID, connection: conn)
             }
         }
     }
@@ -286,7 +295,7 @@ extension GhostNode {
 
                 case .success(.artifactPush(let artifact)):
                     print("[GhostNode] Received artifact push: \(String(artifact.cid.prefix(8)))…")
-                    self.syncEngine.storeReceivedArtifactPublic(artifact)
+                    self.syncEngine.storeReceivedArtifactPublic(artifact, via: conn.transportName)
                     let remaining = (self.pendingArtifactCount[key] ?? 1) - 1
                     self.pendingArtifactCount[key] = remaining
                     if remaining <= 0 {
