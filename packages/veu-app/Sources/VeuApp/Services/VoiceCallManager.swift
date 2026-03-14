@@ -253,6 +253,9 @@ public final class VoiceCallManager: ObservableObject {
 
     /// Route an incoming voice call payload to the appropriate handler.
     public func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
+        // Ignore our own messages echoed back from relay/broadcast
+        guard payload.senderDeviceID != deviceID else { return }
+
         // Handle audio frames on background queue for low latency
         if payload.action == .audioFrame {
             if let frameData = payload.audioFrameData {

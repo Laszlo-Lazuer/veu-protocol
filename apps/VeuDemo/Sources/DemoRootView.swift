@@ -456,10 +456,11 @@ struct ChatTab: View {
             }
         }
         .overlay {
-            // Voice call overlay
+            // Voice call overlay — blocks interaction with chat behind it
             if coordinator.showCallOverlay {
                 VoiceCallOverlay(coordinator: coordinator)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    .onAppear { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
             }
         }
         .overlay {
