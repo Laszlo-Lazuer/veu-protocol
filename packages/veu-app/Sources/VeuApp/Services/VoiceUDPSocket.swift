@@ -24,6 +24,11 @@ public final class VoiceUDPSocket {
     /// Symmetric key for per-frame AES-GCM encryption.
     private let encryptionKey: SymmetricKey
 
+    // Diagnostic counters
+    private var sendFrameCount = 0
+    private var recvFrameCount = 0
+    private var decryptFailCount = 0
+
     public init(circleKey: Data) {
         self.encryptionKey = SymmetricKey(data: circleKey)
     }
@@ -64,9 +69,15 @@ public final class VoiceUDPSocket {
     }
 
     private func handleIncomingConnection(_ connection: NWConnection) {
+        print("[VoiceUDP] 📨 New incoming UDP flow")
         connection.stateUpdateHandler = { state in
-            if case .failed(let error) = state {
+            switch state {
+            case .ready:
+                print("[VoiceUDP] 📨 Incoming flow ready")
+            case .failed(let error):
                 print("[VoiceUDP] Incoming connection failed: \(error)")
+            default:
+                break
             }
         }
         connection.start(queue: queue)
@@ -116,10 +127,17 @@ public final class VoiceUDPSocket {
     /// Frame format: [2-byte seq][compressed audio]
     /// Wire format:  [12-byte nonce][ciphertext][16-byte tag]
     public func sendFrame(_ frame: Data) {
-        guard let connection = sendConnection else { return }
+        guard let connection = sendConnection else {
+            if sendFrameCount == 0 { print("[VoiceUDP] ⚠️ No send connection") }
+            return
+        }
         do {
             let sealedBox = try AES.GCM.seal(frame, using: encryptionKey)
             guard let packet = sealedBox.combined else { return }
+            sendFrameCount += 1
+            if sendFrameCount <= 3 || sendFrameCount % 100 == 0 {
+                print("[VoiceUDP] 📤 Sending frame #\(sendFrameCount) (\(packet.count) bytes)")
+            }
             connection.send(content: packet, completion: .contentProcessed { error in
                 if let error = error {
                     print("[VoiceUDP] Send error: \(error)")
@@ -134,8 +152,17 @@ public final class VoiceUDPSocket {
     public func decryptFrame(_ packet: Data) -> Data? {
         do {
             let sealedBox = try AES.GCM.SealedBox(combined: packet)
-            return try AES.GCM.open(sealedBox, using: encryptionKey)
+            let decrypted = try AES.GCM.open(sealedBox, using: encryptionKey)
+            recvFrameCount += 1
+            if recvFrameCount <= 3 || recvFrameCount % 100 == 0 {
+                print("[VoiceUDP] 📥 Received frame #\(recvFrameCount) (\(decrypted.count) bytes)")
+            }
+            return decrypted
         } catch {
+            decryptFailCount += 1
+            if decryptFailCount <= 3 {
+                print("[VoiceUDP] ⚠️ Decrypt failed (\(packet.count) bytes): \(error)")
+            }
             return nil
         }
     }
