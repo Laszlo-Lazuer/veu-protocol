@@ -82,13 +82,20 @@ public final class AudioEngine {
         // installTap fails on inputNode when voice processing is enabled,
         // but works on a downstream mixer node. The tap callback runs on a
         // non-realtime thread, avoiding all realtime-safety issues.
+        //
+        // CRITICAL: captureMixer MUST be connected to mainMixerNode (with
+        // outputVolume=0) so it sits in an active signal chain. AVAudioEngine
+        // only pushes audio through nodes that have a downstream path to the
+        // output — an orphaned node's tap callback will never fire.
         let captureMixer = AVAudioMixerNode()
         engine.attach(captureMixer)
         engine.connect(inputNode, to: captureMixer, format: nil)
+        engine.connect(captureMixer, to: engine.mainMixerNode, format: mixerFormat)
+        captureMixer.outputVolume = 0  // don't feed mic back to speaker
         self.captureMixer = captureMixer
 
         captureMixer.installTap(onBus: 0, bufferSize: AVAudioFrameCount(Self.framesPerBuffer), format: mixerFormat) { [weak self] buffer, _ in
-            guard let self = self else { return }
+            guard let self = self, !self.isMuted else { return }
 
             // Convert Float32 → Int16
             guard let floatData = buffer.floatChannelData?[0] else { return }
@@ -178,17 +185,8 @@ public final class AudioEngine {
         playerNode.scheduleBuffer(buffer, completionHandler: nil)
     }
 
-    /// Toggle mute state.
-    public var isMuted: Bool = false {
-        didSet {
-            guard let engine = engine, let captureMixer = captureMixer else { return }
-            if isMuted {
-                engine.disconnectNodeInput(captureMixer)
-            } else {
-                engine.connect(engine.inputNode, to: captureMixer, format: nil)
-            }
-        }
-    }
+    /// Toggle mute state. Audio capture continues but frames are not delivered while muted.
+    public var isMuted: Bool = false
 
     /// Toggle speaker output.
     public func setSpeakerEnabled(_ enabled: Bool) {
