@@ -5,6 +5,7 @@
 // (AudioEngine + AudioCodec), and encrypted frame transport.
 
 import Foundation
+import AVFoundation
 import VeuGhost
 
 #if canImport(CryptoKit)
