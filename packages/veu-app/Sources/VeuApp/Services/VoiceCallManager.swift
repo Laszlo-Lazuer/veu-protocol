@@ -61,6 +61,8 @@ public final class VoiceCallManager: ObservableObject {
     private var isOutgoingCall = false
     /// Whether CallKit successfully reported this call.
     private var callKitActive = false
+    /// Whether CallKit has activated the audio session (didActivate fired).
+    private var audioSessionActivated = false
     /// Whether the relay transport is actively handling audio (readable by UI for transport badge).
     public internal(set) var usingRelay = false
     /// Timer that fires after UDP grace period to fall back to relay.
@@ -114,6 +116,7 @@ public final class VoiceCallManager: ObservableObject {
         }
         callKitManager.onAudioSessionActivated = { [weak self] in
             guard let self = self else { return }
+            self.audioSessionActivated = true
             print("[VoiceCall] 🔊 CallKit audio session activated")
             if self.pendingActive != nil {
                 self.pendingActive = nil
@@ -121,6 +124,7 @@ public final class VoiceCallManager: ObservableObject {
             }
         }
         callKitManager.onAudioSessionDeactivated = { [weak self] in
+            self?.audioSessionActivated = false
             print("[VoiceCall] 🔇 CallKit audio session deactivated")
         }
     }
@@ -239,6 +243,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         isOutgoingCall = true
         callKitActive = false
+        audioSessionActivated = false
         // Always set up UDP — if peer is on same LAN, this gives lowest latency
         setupUDP()
         callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID) { [weak self] error in
@@ -289,6 +294,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         isOutgoingCall = false
         callKitActive = false
+        audioSessionActivated = false
         #endif
 
         state = .incomingRinging(
@@ -623,18 +629,20 @@ public final class VoiceCallManager: ObservableObject {
             print("[VoiceCall] 🔗 UDP connected — using direct audio path")
         }
 
-        // If CallKit already activated the audio session (outgoing call flow), start immediately.
-        // Otherwise defer until the didActivate callback fires.
-        if callKitActive {
-            print("[VoiceCall] ⏰ CallKit already active — starting audio immediately")
+        // Start audio only when the audio session is actually activated.
+        // For outgoing calls, didActivate fires during call setup (before answer).
+        // For incoming calls, didActivate fires AFTER the user answers.
+        if audioSessionActivated {
+            print("[VoiceCall] ⏰ Audio session already active — starting audio immediately")
             startAudioPipeline()
         } else {
             pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+            print("[VoiceCall] ⏳ Waiting for CallKit audio session activation…")
 
             // Fallback: if CallKit doesn't activate within a reasonable timeout, start directly
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                 guard let self = self, self.pendingActive != nil else { return }
-                print("[VoiceCall] ⏰ CallKit timeout — starting audio directly")
+                print("[VoiceCall] ⏰ CallKit timeout — starting audio directly (activating session)")
                 self.pendingActive = nil
                 self.startAudioPipeline()
             }
@@ -653,11 +661,11 @@ public final class VoiceCallManager: ObservableObject {
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
-            // CallKit already activated the session for 1:1 calls.
-            // For room calls (no CallKit), we activate ourselves.
-            try audioEngine.start(activateSession: !callKitActive)
+            // If CallKit activated the session, don't re-activate. Otherwise activate ourselves.
+            let needsActivation = !audioSessionActivated
+            try audioEngine.start(activateSession: needsActivation)
             let transport = peerUDPConnected ? "UDP (direct)" : usingRelay ? "Relay (remote)" : "TCP mesh (fallback)"
-            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), transport: \(transport))")
+            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), transport: \(transport), selfActivated: \(needsActivation))")
         } catch {
             print("[VoiceCallManager] Failed to start audio: \(error)")
             endCallCleanup(reason: "Audio error")
@@ -732,6 +740,7 @@ public final class VoiceCallManager: ObservableObject {
         callKitManager.clearAllCalls()
         isOutgoingCall = false
         callKitActive = false
+        audioSessionActivated = false
         #endif
 
         peerAudioAddresses = []
