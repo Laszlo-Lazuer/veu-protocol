@@ -188,6 +188,58 @@ public final class KeychainService {
             deleteCircleKey(for: circleID)
         }
     }
+
+    // MARK: - Active Circle Persistence
+
+    private let activeCircleAccount = "veu-active-circle"
+
+    /// Persist the active circle ID to Keychain so it survives Xcode reinstalls
+    /// that clear UserDefaults but leave Keychain intact.
+    public func saveActiveCircleID(_ circleID: String) {
+        guard let data = circleID.data(using: .utf8) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecValueData as String: data
+        ]
+        var status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            let updateQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: activeCircleAccount
+            ]
+            status = SecItemUpdate(updateQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        }
+    }
+
+    /// Load the active circle ID from Keychain. Returns nil if not set.
+    public func loadActiveCircleID() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let id = String(data: data, encoding: .utf8) else { return nil }
+        return id
+    }
+
+    /// Remove the active circle ID from Keychain (e.g. when the user clears all circles).
+    public func deleteActiveCircleID() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
 }
 
 // MARK: - Errors
