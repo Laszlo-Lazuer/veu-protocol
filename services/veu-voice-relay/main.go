@@ -29,19 +29,21 @@ defer cancel()
 	// Configure APNs push client (optional — works without it, just can't wake offline callees)
 	var pusher *push.Client
 	apnsKeyPath := os.Getenv("VEU_APNS_KEY_PATH")
+	apnsKeyContent := os.Getenv("VEU_APNS_KEY_CONTENT")
 	apnsKeyID := os.Getenv("VEU_APNS_KEY_ID")
 	apnsTeamID := os.Getenv("VEU_APNS_TEAM_ID")
 	apnsBundleID := envOrDefault("VEU_APNS_BUNDLE_ID", "com.squirrelyeye.veu")
 	apnsSandbox := os.Getenv("VEU_APNS_SANDBOX") == "true"
 
-	if apnsKeyPath != "" && apnsKeyID != "" && apnsTeamID != "" {
+	if (apnsKeyPath != "" || apnsKeyContent != "") && apnsKeyID != "" && apnsTeamID != "" {
 		var err error
 		pusher, err = push.NewClient(push.Config{
-			KeyPath:  apnsKeyPath,
-			KeyID:    apnsKeyID,
-			TeamID:   apnsTeamID,
-			BundleID: apnsBundleID,
-			Sandbox:  apnsSandbox,
+			KeyPath:    apnsKeyPath,
+			KeyContent: apnsKeyContent,
+			KeyID:      apnsKeyID,
+			TeamID:     apnsTeamID,
+			BundleID:   apnsBundleID,
+			Sandbox:    apnsSandbox,
 		})
 		if err != nil {
 			slog.Error("APNs client init failed (push disabled)", "error", err)

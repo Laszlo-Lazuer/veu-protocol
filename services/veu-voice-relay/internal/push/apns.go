@@ -26,8 +26,10 @@ const (
 
 // Config holds APNs authentication parameters.
 type Config struct {
-	// Path to the .p8 auth key file (or base64 content via APNS_KEY_CONTENT).
+	// Path to the .p8 auth key file.
 	KeyPath string
+	// PEM content of the .p8 key (alternative to KeyPath, for secrets).
+	KeyContent string
 	// The 10-char Key ID from Apple Developer portal.
 	KeyID string
 	// The 10-char Team ID from Apple Developer portal.
@@ -64,7 +66,15 @@ func NewClient(cfg Config) (*Client, error) {
 			cfg.KeyID, cfg.TeamID, cfg.BundleID)
 	}
 
-	key, err := loadKey(cfg.KeyPath)
+	var key *ecdsa.PrivateKey
+	var err error
+	if cfg.KeyContent != "" {
+		key, err = parseKeyPEM([]byte(cfg.KeyContent))
+	} else if cfg.KeyPath != "" {
+		key, err = loadKey(cfg.KeyPath)
+	} else {
+		return nil, fmt.Errorf("APNs config: either KeyPath or KeyContent required")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("load APNs key: %w", err)
 	}
@@ -170,10 +180,14 @@ func loadKey(path string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseKeyPEM(data)
+}
 
+// parseKeyPEM parses PEM-encoded PKCS8 ECDSA private key bytes.
+func parseKeyPEM(data []byte) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, fmt.Errorf("no PEM block found in %s", path)
+		return nil, fmt.Errorf("no PEM block found")
 	}
 
 	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
