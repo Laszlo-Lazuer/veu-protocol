@@ -49,20 +49,39 @@ LastActivity time.Time
 type Manager struct {
 mu       sync.RWMutex
 devices  map[string]*websocket.Conn // "circle_id:device_id" → conn
-sessions map[string]*CallSession    // call_id → session
+sessions   map[string]*CallSession    // call_id → session
+	pushTokens map[string]string          // "circle_id:device_id" → APNs push token
 }
 
 func NewManager() *Manager {
 return &Manager{
 devices:  make(map[string]*websocket.Conn),
-sessions: make(map[string]*CallSession),
+sessions:   make(map[string]*CallSession),
+		pushTokens: make(map[string]string),
 }
 }
 
 func (m *Manager) RegisterDevice(key string, conn *websocket.Conn) {
-m.mu.Lock()
-defer m.mu.Unlock()
-m.devices[key] = conn
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.devices[key] = conn
+}
+
+// SetPushToken stores a VoIP push token for a device.
+func (m *Manager) SetPushToken(key, token string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if token != "" {
+		m.pushTokens[key] = token
+	}
+}
+
+// GetPushToken returns the stored VoIP push token for a device.
+func (m *Manager) GetPushToken(key string) (string, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	t, ok := m.pushTokens[key]
+	return t, ok
 }
 
 func (m *Manager) UnregisterDevice(key string) {

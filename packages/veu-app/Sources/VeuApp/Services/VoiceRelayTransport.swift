@@ -56,7 +56,8 @@ public final class VoiceRelayTransport {
     public func connect(
         deviceID: String,
         circleID: String,
-        signingKey: Curve25519.Signing.PrivateKey
+        signingKey: Curve25519.Signing.PrivateKey,
+        pushToken: String? = nil
     ) {
         self.deviceID = deviceID
         self.circleID = circleID
@@ -77,7 +78,7 @@ public final class VoiceRelayTransport {
         }
 
         let publicKey = signingKey.publicKey
-        let msg: [String: Any] = [
+        var msg: [String: Any] = [
             "type": "register",
             "device_id": deviceID,
             "circle_id": circleID,
@@ -85,6 +86,11 @@ public final class VoiceRelayTransport {
             "timestamp": timestamp,
             "signature": Data(signature).hexString
         ]
+
+        // Include VoIP push token if available (for offline call wakeup)
+        if let pushToken = pushToken, !pushToken.isEmpty {
+            msg["push_token"] = pushToken
+        }
 
         sendJSON(msg) { [weak self] error in
             if let error = error {
@@ -205,6 +211,12 @@ public final class VoiceRelayTransport {
 
         case "call_ringing":
             let callID = json["call_id"] as? String ?? ""
+            onCallRinging?(callID)
+
+        case "call_push_sent":
+            // Server sent a VoIP push to wake offline callee; treat as ringing
+            let callID = json["call_id"] as? String ?? ""
+            print("[VoiceRelay] 📲 Push sent to wake callee for call \(callID.prefix(8))")
             onCallRinging?(callID)
 
         case "call_answer":

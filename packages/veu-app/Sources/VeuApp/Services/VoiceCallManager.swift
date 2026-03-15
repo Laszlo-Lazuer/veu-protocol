@@ -39,6 +39,9 @@ public final class VoiceCallManager: ObservableObject {
     /// Ed25519 signing key for relay authentication (set from AppState.identity).
     public var signingKey: Curve25519.Signing.PrivateKey?
 
+    /// VoIP push token for offline call wakeup (set from PushKitManager).
+    public var pushToken: String?
+
     /// Send a voice signal to a peer via the Ghost Network (TCP).
     public var sendSignal: ((GhostMessage.VoiceCallPayload) -> Void)?
     /// Send audio frame via TCP fallback (used when UDP unavailable).
@@ -131,7 +134,7 @@ public final class VoiceCallManager: ObservableObject {
             return
         }
         let transport = VoiceRelayTransport(circleKey: key)
-        transport.connect(deviceID: deviceID, circleID: circleID, signingKey: signingKey)
+        transport.connect(deviceID: deviceID, circleID: circleID, signingKey: signingKey, pushToken: pushToken)
 
         // Only wire audio callback — signaling stays on GhostMessage
         transport.onAudioFrame = { [weak self] frameData in

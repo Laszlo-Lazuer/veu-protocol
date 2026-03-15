@@ -19,7 +19,7 @@ import (
 func newTestServer(t *testing.T) (*httptest.Server, *Hub) {
 t.Helper()
 mgr := session.NewManager()
-hub := NewHub(mgr)
+hub := NewHub(mgr, nil)
 
 mux := http.NewServeMux()
 mux.HandleFunc("GET /ws", hub.HandleWebSocket)

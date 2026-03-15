@@ -1,17 +1,18 @@
 package main
 
 import (
-"context"
-"log/slog"
-"net/http"
-"os"
-"os/signal"
-"syscall"
-"time"
+	"context"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-"github.com/veu-protocol/veu-voice-relay/internal/api"
-"github.com/veu-protocol/veu-voice-relay/internal/relay"
-"github.com/veu-protocol/veu-voice-relay/internal/session"
+	"github.com/veu-protocol/veu-voice-relay/internal/api"
+	"github.com/veu-protocol/veu-voice-relay/internal/push"
+	"github.com/veu-protocol/veu-voice-relay/internal/relay"
+	"github.com/veu-protocol/veu-voice-relay/internal/session"
 )
 
 func main() {
@@ -23,8 +24,35 @@ port := envOrDefault("VEU_VOICE_RELAY_PORT", "8080")
 ctx, cancel := context.WithCancel(context.Background())
 defer cancel()
 
-mgr := session.NewManager()
-hub := relay.NewHub(mgr)
+	mgr := session.NewManager()
+
+	// Configure APNs push client (optional — works without it, just can't wake offline callees)
+	var pusher *push.Client
+	apnsKeyPath := os.Getenv("VEU_APNS_KEY_PATH")
+	apnsKeyID := os.Getenv("VEU_APNS_KEY_ID")
+	apnsTeamID := os.Getenv("VEU_APNS_TEAM_ID")
+	apnsBundleID := envOrDefault("VEU_APNS_BUNDLE_ID", "com.squirrelyeye.veu")
+	apnsSandbox := os.Getenv("VEU_APNS_SANDBOX") == "true"
+
+	if apnsKeyPath != "" && apnsKeyID != "" && apnsTeamID != "" {
+		var err error
+		pusher, err = push.NewClient(push.Config{
+			KeyPath:  apnsKeyPath,
+			KeyID:    apnsKeyID,
+			TeamID:   apnsTeamID,
+			BundleID: apnsBundleID,
+			Sandbox:  apnsSandbox,
+		})
+		if err != nil {
+			slog.Error("APNs client init failed (push disabled)", "error", err)
+		} else {
+			slog.Info("APNs push enabled", "key_id", apnsKeyID, "sandbox", apnsSandbox)
+		}
+	} else {
+		slog.Info("APNs push disabled (no key configured)")
+	}
+
+	hub := relay.NewHub(mgr, pusher)
 mux := api.NewRouter(hub)
 
 go hub.StartCleanup(ctx)

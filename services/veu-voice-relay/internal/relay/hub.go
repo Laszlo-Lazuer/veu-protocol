@@ -8,8 +8,9 @@ import (
 "strings"
 "time"
 
-"github.com/veu-protocol/veu-voice-relay/internal/auth"
-"github.com/veu-protocol/veu-voice-relay/internal/session"
+	"github.com/veu-protocol/veu-voice-relay/internal/auth"
+	"github.com/veu-protocol/veu-voice-relay/internal/push"
+	"github.com/veu-protocol/veu-voice-relay/internal/session"
 "golang.org/x/time/rate"
 "nhooyr.io/websocket"
 )
@@ -31,30 +32,33 @@ audioBurst     = 150 // burst allowance for audio
 
 // SignalingMessage is the JSON wire format for all signaling messages.
 type SignalingMessage struct {
-Type           string `json:"type"`
-DeviceID       string `json:"device_id,omitempty"`
-CircleID       string `json:"circle_id,omitempty"`
-CallID         string `json:"call_id,omitempty"`
-TargetDeviceID string `json:"target_device_id,omitempty"`
-CallerDeviceID string `json:"caller_device_id,omitempty"`
-SDP            string `json:"sdp,omitempty"`
-Reason         string `json:"reason,omitempty"`
-Candidate      string `json:"candidate,omitempty"`
-Message        string `json:"message,omitempty"`
-// Auth fields (register only)
-PublicKey string `json:"public_key,omitempty"`
-Timestamp string `json:"timestamp,omitempty"`
-Signature string `json:"signature,omitempty"`
+	Type           string `json:"type"`
+	DeviceID       string `json:"device_id,omitempty"`
+	CircleID       string `json:"circle_id,omitempty"`
+	CallID         string `json:"call_id,omitempty"`
+	TargetDeviceID string `json:"target_device_id,omitempty"`
+	CallerDeviceID string `json:"caller_device_id,omitempty"`
+	SDP            string `json:"sdp,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	Candidate      string `json:"candidate,omitempty"`
+	Message        string `json:"message,omitempty"`
+	// Auth fields (register only)
+	PublicKey  string `json:"public_key,omitempty"`
+	Timestamp string `json:"timestamp,omitempty"`
+	Signature string `json:"signature,omitempty"`
+	// Push token (register only) — VoIP push token for offline call wakeup
+	PushToken string `json:"push_token,omitempty"`
 }
 
 // Hub manages WebSocket connections and routes signaling and audio frames.
 type Hub struct {
-manager  *session.Manager
-verifier *auth.Verifier
+	manager  *session.Manager
+	verifier *auth.Verifier
+	pusher   *push.Client // nil if APNs not configured
 }
 
-func NewHub(mgr *session.Manager) *Hub {
-return &Hub{manager: mgr, verifier: auth.NewVerifier()}
+func NewHub(mgr *session.Manager, pusher *push.Client) *Hub {
+	return &Hub{manager: mgr, verifier: auth.NewVerifier(), pusher: pusher}
 }
 
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -150,10 +154,17 @@ if err := h.verifier.VerifyRegister(msg.DeviceID, msg.CircleID, msg.PublicKey, m
 	return
 }
 
-key := msg.CircleID + ":" + msg.DeviceID
-h.manager.RegisterDevice(key, conn)
-*deviceKey = key
-slog.Info("device registered", "device_key", key)
+	key := msg.CircleID + ":" + msg.DeviceID
+	h.manager.RegisterDevice(key, conn)
+	*deviceKey = key
+
+	// Store VoIP push token if provided
+	if msg.PushToken != "" {
+		h.manager.SetPushToken(key, msg.PushToken)
+		slog.Info("push token stored", "device_key", key)
+	}
+
+	slog.Info("device registered", "device_key", key)
 }
 
 func (h *Hub) handleCallOffer(ctx context.Context, conn *websocket.Conn, msg SignalingMessage, senderKey string) {
@@ -169,11 +180,34 @@ return
 circleID := senderKey[:strings.Index(senderKey, ":")]
 targetKey := circleID + ":" + msg.TargetDeviceID
 
-targetConn, ok := h.manager.GetDeviceConn(targetKey)
-if !ok {
-h.sendError(conn, "target device not connected")
-return
-}
+	targetConn, ok := h.manager.GetDeviceConn(targetKey)
+	if !ok {
+		// Target not connected — try sending a VoIP push to wake them
+		if h.pusher != nil {
+			if pushToken, hasPush := h.manager.GetPushToken(targetKey); hasPush {
+				callerDeviceID := senderKey[strings.Index(senderKey, ":")+1:]
+				payload := push.VoIPPayload{
+					CallID:     msg.CallID,
+					CallerName: callerDeviceID,
+					CallerID:   callerDeviceID,
+					CircleID:   circleID,
+				}
+				if err := h.pusher.SendVoIPPush(pushToken, payload); err != nil {
+					slog.Error("failed to send VoIP push", "error", err, "target", targetKey)
+					h.sendError(conn, "target device not connected and push failed")
+					return
+				}
+				// Create session and wait for target to connect + answer
+				h.manager.CreateSession(msg.CallID, senderKey, targetKey, conn)
+				slog.Info("VoIP push sent, waiting for callee", "call_id", msg.CallID, "target", targetKey)
+				ack := SignalingMessage{Type: "call_push_sent", CallID: msg.CallID}
+				h.writeJSON(conn, ack)
+				return
+			}
+		}
+		h.sendError(conn, "target device not connected")
+		return
+	}
 
 callerDeviceID := senderKey[strings.Index(senderKey, ":")+1:]
 h.manager.CreateSession(msg.CallID, senderKey, targetKey, conn)
