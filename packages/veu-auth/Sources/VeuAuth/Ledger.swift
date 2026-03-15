@@ -142,7 +142,7 @@ public final class Ledger {
     ///   - circleID: Opaque Circle identifier (UUID or fingerprint).
     ///   - encryptedName: AES-256-GCM encrypted display name blob.
     public func insertCircle(circleID: String, encryptedName: Data) throws {
-        let sql = "INSERT INTO circles (circle_id, encrypted_name) VALUES (?, ?)"
+        let sql = "INSERT OR IGNORE INTO circles (circle_id, encrypted_name) VALUES (?, ?)"
         try executeWithBindings(sql) { stmt in
             sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
             sqlite3_bind_blob(stmt, 2, (encryptedName as NSData).bytes, Int32(encryptedName.count), nil)
