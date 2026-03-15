@@ -3,7 +3,7 @@ import Foundation
 /// Shared sizing rules for websocket relay messages.
 public enum RelayTransportEnvelope {
     public static let maxMessageSize = 10 * 1024 * 1024
-    public static let maxPayloadSize = 5 * 1024 * 1024
+    public static let maxPayloadSize = 10 * 1024 * 1024
 
     public static func encodedPayloadSize(for envelope: Data) -> Int {
         envelope.base64EncodedString().utf8.count

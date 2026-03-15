@@ -18,7 +18,7 @@ import (
 
 const (
 	maxMessageSize = 10 * 1024 * 1024 // 10 MB
-	maxPayloadSize = 5 * 1024 * 1024  // 5 MB
+	maxPayloadSize = 10 * 1024 * 1024 // 10 MB (payload is base64-encoded; overall message limit governs)
 	writeTimeout   = 10 * time.Second
 	pingInterval   = 30 * time.Second
 )

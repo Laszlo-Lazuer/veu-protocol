@@ -1914,7 +1914,7 @@ struct CaptureSheet: View {
 
         let circleKey = try state.activeCircleKey()
         let captionValue = caption.isEmpty ? nil : caption
-        let qualityCandidates: [CGFloat] = [0.72, 0.64, 0.56, 0.48, 0.40, 0.32, 0.26, 0.22]
+        let qualityCandidates: [CGFloat] = [0.72, 0.64, 0.56, 0.48, 0.40, 0.32, 0.26, 0.22, 0.18, 0.14, 0.10]
         let sizeCandidates = dimensionCandidates(for: image)
 
         var bestCandidate: (data: Data, packageSize: Int)?
@@ -1945,19 +1945,19 @@ struct CaptureSheet: View {
             }
         }
 
-        let bestSize = bestCandidate?.packageSize ?? 0
-        throw NSError(
-            domain: "DemoTimelineTab",
-            code: 2,
-            userInfo: [
-                NSLocalizedDescriptionKey: "Couldn't fit the image under the 2 MB relay package target (best was \(formatBytes(bestSize))). Try a smaller image or shorter caption."
-            ]
-        )
+        // Always return the best candidate — local/mesh have no size limit and
+        // the relay hard limit (5 MB payload) is well above the 2 MB target.
+        if let best = bestCandidate {
+            print("[Compress] Best candidate \(formatBytes(best.packageSize)) exceeds 2 MB relay target; using anyway")
+            return best.data
+        }
+
+        return rawData
     }
 
     private func dimensionCandidates(for image: UIImage) -> [CGFloat] {
         let originalLongestEdge = max(image.size.width, image.size.height)
-        let candidates: [CGFloat] = [1080, 960, 840, 720, 600]
+        let candidates: [CGFloat] = [1080, 960, 840, 720, 600, 540, 480]
         return candidates.filter { $0 < originalLongestEdge } + [min(originalLongestEdge, 1080)]
             .reduce(into: [CGFloat]()) { result, value in
                 if !result.contains(value) {
