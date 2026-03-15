@@ -481,8 +481,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 // Determine conversation: DM uses peer device ID, circle chat uses circle ID
                 let convID: String
                 if let recipient = payload.recipientDeviceID {
-                    // DM: conversation keyed by the *other* party
-                    convID = payload.sender == myCallsign ? recipient : (entry.senderCallsign ?? payload.sender)
+                    // DM: conversation keyed by the *other* party's device ID
+                    convID = payload.sender == myCallsign ? recipient : (entry.senderID ?? payload.sender)
                 } else {
                     convID = state.activeCircleID ?? "unknown"
                 }
@@ -506,6 +506,21 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     private func buildConversations(circleID: String, myCallsign: String) {
         var convMap: [String: Conversation] = [:]
 
+        // Build device ID → callsign lookup from circle members
+        var callsignMap: [String: String] = [:]
+        if let state = appState,
+           let members = try? state.ledger.listCircleMembers(circleID: circleID) {
+            for member in members {
+                callsignMap[member.deviceID] = member.callsign
+            }
+        }
+        // Also extract callsigns from peer messages (covers reinstall when circle_members is sparse)
+        for msg in chatMessages where !msg.isMe && msg.conversationID != circleID {
+            if callsignMap[msg.conversationID] == nil {
+                callsignMap[msg.conversationID] = msg.sender
+            }
+        }
+
         // Always include circle chat
         convMap[circleID] = Conversation(
             id: circleID,
@@ -522,8 +537,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 if convID == circleID {
                     convType = .circle
                 } else {
-                    // DM — the convID is the peer's callsign or device ID
-                    convType = .dm(peerDeviceID: convID, peerCallsign: msg.isMe ? convID : msg.sender)
+                    // DM — convID is the peer's device ID; look up callsign for display
+                    let peerCallsign = msg.isMe ? (callsignMap[convID] ?? convID) : msg.sender
+                    convType = .dm(peerDeviceID: convID, peerCallsign: peerCallsign)
                 }
                 convMap[convID] = Conversation(
                     id: convID,
