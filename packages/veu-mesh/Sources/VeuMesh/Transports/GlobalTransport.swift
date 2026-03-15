@@ -266,6 +266,10 @@ public enum RelayMessage: Codable {
     case pullResponse(PullResponsePayload)
     case registerToken(RegisterTokenPayload)
     case artifactNotify(ArtifactNotifyPayload)
+    case inviteDeposit(InviteDepositPayload)
+    case inviteClaim(InviteClaimPayload)
+    case inviteAck(InviteAckPayload)
+    case inviteData(InviteDataPayload)
 
     public struct ArtifactPushPayload: Codable {
         public var cid: String
@@ -345,6 +349,54 @@ public enum RelayMessage: Codable {
         public var payload: String
     }
 
+    public struct InviteDepositPayload: Codable {
+        public var token: String
+        public var payload: String
+        public var expiresIn: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case token, payload
+            case expiresIn = "expires_in"
+        }
+
+        public init(token: String, payload: String, expiresIn: Int? = nil) {
+            self.token = token
+            self.payload = payload
+            self.expiresIn = expiresIn
+        }
+    }
+
+    public struct InviteClaimPayload: Codable {
+        public var token: String
+
+        public init(token: String) {
+            self.token = token
+        }
+    }
+
+    public struct InviteAckPayload: Codable {
+        public var token: String
+        public var topicHash: String
+        public var status: String
+        public var message: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case token, status, message
+            case topicHash = "topic_hash"
+        }
+    }
+
+    public struct InviteDataPayload: Codable {
+        public var token: String
+        public var payload: String
+        public var topicHash: String
+
+        private enum CodingKeys: String, CodingKey {
+            case token, payload
+            case topicHash = "topic_hash"
+        }
+    }
+
     // MARK: - Coding Keys
 
     private enum CodingKeys: String, CodingKey {
@@ -363,6 +415,10 @@ public enum RelayMessage: Codable {
         case "pull_response": self = .pullResponse(try singleContainer.decode(PullResponsePayload.self))
         case "register_token": self = .registerToken(try singleContainer.decode(RegisterTokenPayload.self))
         case "artifact_notify": self = .artifactNotify(try singleContainer.decode(ArtifactNotifyPayload.self))
+        case "invite_deposit": self = .inviteDeposit(try singleContainer.decode(InviteDepositPayload.self))
+        case "invite_claim": self = .inviteClaim(try singleContainer.decode(InviteClaimPayload.self))
+        case "invite_ack": self = .inviteAck(try singleContainer.decode(InviteAckPayload.self))
+        case "invite_data": self = .inviteData(try singleContainer.decode(InviteDataPayload.self))
         default: throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown type: \(type)"))
         }
     }
@@ -388,6 +444,30 @@ public enum RelayMessage: Codable {
         case .artifactNotify(let p):
             try container.encode("artifact_notify", forKey: .type)
             try p.encode(to: encoder)
+        case .inviteDeposit(let p):
+            try container.encode("invite_deposit", forKey: .type)
+            try p.encode(to: encoder)
+        case .inviteClaim(let p):
+            try container.encode("invite_claim", forKey: .type)
+            try p.encode(to: encoder)
+        case .inviteAck(let p):
+            try container.encode("invite_ack", forKey: .type)
+            try p.encode(to: encoder)
+        case .inviteData(let p):
+            try container.encode("invite_data", forKey: .type)
+            try p.encode(to: encoder)
         }
+    }
+}
+
+// MARK: - Invite Helpers
+
+extension GlobalTransport {
+    /// Derive the rendezvous topic hash for an invite token.
+    /// Matches the relay server: `SHA256("veu-invite-v1:" + token)`.
+    public static func inviteTopicHash(token: String) -> String {
+        let data = Data("veu-invite-v1:\(token)".utf8)
+        let hash = SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
     }
 }

@@ -85,6 +85,14 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var proximityVerified = false
     @Published var discoveredPeerName: String?
 
+    // Remote invite state
+    @Published var invitePhase: InvitePhase = .idle
+    @Published var inviteShortCode: String?
+    @Published var inviteAuraColorHex: String?
+    @Published var inviteLink: String?
+    @Published var pendingInviteToken: String?
+    private(set) var inviteService: InviteService?
+
     // MARK: - Internal
 
     private var handshakeVM: HandshakeViewModel?
@@ -328,6 +336,137 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         _responderKeypair = nil
         proximitySession?.stop()
         proximitySession = nil
+    }
+
+    // MARK: - Remote Invite
+
+    /// Generate a single-use invite link for the active circle.
+    func generateInvite() {
+        guard let state = appState,
+              let circleID = state.activeCircleID else { return }
+
+        let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
+        let service = InviteService(relayURL: relay)
+        self.inviteService = service
+        invitePhase = .depositing
+
+        // Observe invite service state changes
+        service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
+            self?.invitePhase = phase
+        }.store(in: &cancellables)
+        service.$shortCode.receive(on: DispatchQueue.main).sink { [weak self] code in
+            self?.inviteShortCode = code
+        }.store(in: &cancellables)
+        service.$auraColorHex.receive(on: DispatchQueue.main).sink { [weak self] hex in
+            self?.inviteAuraColorHex = hex
+        }.store(in: &cancellables)
+        service.$inviteLink.receive(on: DispatchQueue.main).sink { [weak self] link in
+            self?.inviteLink = link
+        }.store(in: &cancellables)
+
+        Task { @MainActor in
+            do {
+                try await service.generateInvite(circleID: circleID)
+            } catch {
+                self.invitePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Handle a `veu://invite?id=<token>` deep link.
+    func handleInviteURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "veu",
+              components.host == "invite",
+              let token = components.queryItems?.first(where: { $0.name == "id" })?.value else {
+            return
+        }
+
+        pendingInviteToken = token
+
+        let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
+        let service = InviteService(relayURL: relay)
+        self.inviteService = service
+        invitePhase = .claiming
+
+        service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
+            self?.invitePhase = phase
+        }.store(in: &cancellables)
+        service.$shortCode.receive(on: DispatchQueue.main).sink { [weak self] code in
+            self?.inviteShortCode = code
+        }.store(in: &cancellables)
+        service.$auraColorHex.receive(on: DispatchQueue.main).sink { [weak self] hex in
+            self?.inviteAuraColorHex = hex
+        }.store(in: &cancellables)
+
+        Task { @MainActor in
+            do {
+                try await service.claimInvite(token: token)
+            } catch {
+                self.invitePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Confirm an invite handshake after SAS verification.
+    func confirmInvite() {
+        guard let service = inviteService,
+              let state = appState else { return }
+        do {
+            try service.confirm()
+
+            guard let circleID = service.circleID else { return }
+            print("[AppCoordinator] Invite confirmed, circleID=\(circleID.prefix(8))…")
+
+            // Register self as circle member
+            try state.ledger.insertCircleMember(
+                circleID: circleID,
+                deviceID: state.identity.deviceID,
+                publicKeyHex: state.identity.publicKeyHex,
+                callsign: state.identity.callsign
+            )
+
+            // Register peer as circle member
+            if let peerPubKeyData = service.peerPublicKeyData {
+                let peerCallsign = Identity.deriveCallsign(from: peerPubKeyData)
+                let peerDeviceID = Identity.deriveDeviceID(from: peerPubKeyData)
+                try state.ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: peerDeviceID,
+                    publicKeyHex: peerPubKeyData.map { String(format: "%02x", $0) }.joined(),
+                    callsign: peerCallsign
+                )
+            }
+
+            reloadTimeline()
+            reloadCircleMembers()
+
+            let shouldRestart = networkService?.isRunning == true || networkRunning
+            startNetwork(forceRestart: shouldRestart)
+            networkLog.append(shouldRestart ? "🔄 Network restarted for invited circle" : "🟢 Network started for invited circle")
+
+            invitePhase = .confirmed
+        } catch {
+            print("[AppCoordinator] Invite confirm failed: \(error)")
+            invitePhase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Reject a pending invite handshake.
+    func rejectInvite() {
+        inviteService?.reject()
+        resetInvite()
+    }
+
+    /// Reset invite state to idle.
+    func resetInvite() {
+        inviteService?.reset()
+        inviteService = nil
+        invitePhase = .idle
+        inviteShortCode = nil
+        inviteAuraColorHex = nil
+        inviteLink = nil
+        pendingInviteToken = nil
     }
 
     private func updateHandshakeState(from vm: HandshakeViewModel) {

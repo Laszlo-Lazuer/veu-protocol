@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import ImageIO
 import VeuApp
 import VeuGlaze
@@ -63,6 +64,10 @@ struct DemoRootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(coordinator.sealError ?? "")
+        }
+        .onOpenURL { url in
+            coordinator.handleInviteURL(url)
+            selectedTab = 1 // Switch to Handshake tab
         }
     }
 }
@@ -168,22 +173,37 @@ struct IdentityTab: View {
 struct HandshakeTab: View {
     let appState: AppState
     @ObservedObject var coordinator: AppCoordinator
+    @State private var showShareSheet = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                EmeraldView(
-                    phase: coordinator.handshakePhase,
-                    progress: coordinator.handshakeProgress
-                )
-                .frame(height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+            ScrollView {
+                VStack(spacing: 20) {
+                    EmeraldView(
+                        phase: coordinator.handshakePhase,
+                        progress: coordinator.handshakeProgress
+                    )
+                    .frame(height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                handshakeContent
-                Spacer()
+                    handshakeContent
+
+                    // Remote invite section (only when proximity handshake is idle)
+                    if coordinator.handshakePhase == .idle {
+                        Divider().padding(.vertical, 8)
+                        inviteContent
+                    }
+
+                    Spacer()
+                }
+                .padding()
             }
-            .padding()
             .navigationTitle("Emerald Handshake")
+            .sheet(isPresented: $showShareSheet) {
+                if let link = coordinator.inviteLink, let url = URL(string: link) {
+                    ShareSheet(activityItems: [url])
+                }
+            }
         }
     }
 
@@ -305,6 +325,166 @@ struct HandshakeTab: View {
             .buttonStyle(.bordered)
         }
     }
+
+    // MARK: - Remote Invite UI
+
+    @ViewBuilder
+    private var inviteContent: some View {
+        switch coordinator.invitePhase {
+        case .idle:
+            VStack(spacing: 12) {
+                Text("Or invite someone remotely")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Button {
+                    coordinator.generateInvite()
+                } label: {
+                    Label("Invite to Circle", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .disabled(appState.activeCircleID == nil)
+            }
+
+        case .depositing, .claiming:
+            VStack(spacing: 12) {
+                ProgressView()
+                Text(coordinator.invitePhase == .depositing ? "Creating invite…" : "Claiming invite…")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+        case .waitingForClaim:
+            VStack(spacing: 16) {
+                Image(systemName: "link.circle.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.blue)
+                Text("Invite Ready")
+                    .font(.headline)
+                Text("Share this link with the person you want to invite.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if let link = coordinator.inviteLink {
+                    Text(link)
+                        .font(.system(.caption, design: .monospaced))
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                }
+
+                HStack(spacing: 16) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+
+                    Button("Cancel") {
+                        coordinator.resetInvite()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+            }
+
+        case .verifying:
+            VStack(spacing: 16) {
+                Text("Verify Short Code")
+                    .font(.headline)
+                Text("Confirm this code matches on both devices\nvia call or message.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if let code = coordinator.inviteShortCode {
+                    Text(code)
+                        .font(.system(size: 36, weight: .bold, design: .monospaced))
+                        .kerning(4)
+                }
+                if let hex = coordinator.inviteAuraColorHex {
+                    Circle()
+                        .fill(Color(hex: hex))
+                        .frame(width: 60, height: 60)
+                }
+
+                HStack(spacing: 20) {
+                    Button("Reject") {
+                        coordinator.rejectInvite()
+                        HapticEngine.burnClick()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+
+                    Button("Confirm") {
+                        coordinator.confirmInvite()
+                        HapticEngine.handshakeHeartbeat()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                }
+            }
+
+        case .confirmed:
+            VStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.green)
+                Text("Invite Accepted!")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Button("Done") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+
+        case .failed(let message):
+            VStack(spacing: 12) {
+                Image(systemName: "xmark.octagon")
+                    .font(.system(size: 48))
+                    .foregroundColor(.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Try Again") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+
+        case .expired:
+            VStack(spacing: 12) {
+                Image(systemName: "clock.badge.xmark")
+                    .font(.system(size: 48))
+                    .foregroundColor(.orange)
+                Text("Invite expired")
+                    .foregroundColor(.secondary)
+                Button("Create New Invite") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Proximity Search Animation
