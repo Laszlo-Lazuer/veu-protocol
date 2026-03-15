@@ -25,6 +25,15 @@ type PushToken struct {
 	Token     string
 }
 
+// Invite represents a single-use remote handshake invitation.
+type Invite struct {
+	Token     string `json:"token"`
+	Payload   string `json:"payload"`
+	TopicHash string `json:"topic_hash"`
+	CreatedAt int64  `json:"created_at"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
 // Store provides SQLite-backed persistence for encrypted artifacts and push tokens.
 type Store struct {
 	db *sql.DB
@@ -84,6 +93,16 @@ func (s *Store) migrate() error {
 
 	// Phase 3: indexes that depend on columns added in phase 2.
 	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_artifacts_burn_after ON artifacts (burn_after) WHERE burn_after IS NOT NULL`)
+
+	// Phase 4: invites table for single-use remote handshake invitations.
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS invites (
+		token TEXT PRIMARY KEY,
+		payload TEXT NOT NULL,
+		topic_hash TEXT NOT NULL,
+		created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+		expires_at INTEGER NOT NULL
+	)`)
+	s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_invites_expires ON invites (expires_at)`)
 
 	return nil
 }
@@ -187,6 +206,85 @@ func (s *Store) GetPushTokens(ctx context.Context, topicHash string) ([]PushToke
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// --- Invites ---
+
+// InsertInvite stores a single-use invite. Returns false if the token already exists.
+func (s *Store) InsertInvite(ctx context.Context, token, payload, topicHash string, expiresAt int64) (bool, error) {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO invites (token, payload, topic_hash, expires_at) VALUES (?, ?, ?, ?)`,
+		token, payload, topicHash, expiresAt,
+	)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("insert invite: %w", err)
+	}
+	return true, nil
+}
+
+// ClaimInvite atomically returns the invite payload and deletes it.
+// Returns an error if the token doesn't exist or has expired.
+func (s *Store) ClaimInvite(ctx context.Context, token string) (*Invite, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var inv Invite
+	err = tx.QueryRowContext(ctx,
+		`SELECT token, payload, topic_hash, created_at, expires_at FROM invites WHERE token = ?`,
+		token,
+	).Scan(&inv.Token, &inv.Payload, &inv.TopicHash, &inv.CreatedAt, &inv.ExpiresAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("invite not found")
+		}
+		return nil, fmt.Errorf("query invite: %w", err)
+	}
+
+	now := time.Now().Unix()
+	if inv.ExpiresAt <= now {
+		// Expired — purge it and reject
+		tx.ExecContext(ctx, `DELETE FROM invites WHERE token = ?`, token)
+		tx.Commit()
+		return nil, fmt.Errorf("invite expired")
+	}
+
+	// Purge on claim — single use, zero residual data
+	_, err = tx.ExecContext(ctx, `DELETE FROM invites WHERE token = ?`, token)
+	if err != nil {
+		return nil, fmt.Errorf("delete invite: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return &inv, nil
+}
+
+// DeleteInvite removes an invite by token. Used for cleanup after handshake completion.
+func (s *Store) DeleteInvite(ctx context.Context, token string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE token = ?`, token)
+	if err != nil {
+		return fmt.Errorf("delete invite: %w", err)
+	}
+	return nil
+}
+
+// PruneExpiredInvites deletes all invites past their expires_at timestamp.
+func (s *Store) PruneExpiredInvites(ctx context.Context) (int64, error) {
+	now := time.Now().Unix()
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM invites WHERE expires_at <= ?`, now)
+	if err != nil {
+		return 0, fmt.Errorf("prune expired invites: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func isUniqueViolation(err error) bool {

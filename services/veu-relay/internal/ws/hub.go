@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,7 @@ type IncomingMessage struct {
 	Since     int64  `json:"since,omitempty"`
 	Token     string `json:"token,omitempty"`
 	DeviceID  string `json:"device_id,omitempty"`
+	ExpiresIn *int64 `json:"expires_in,omitempty"` // invite_deposit: TTL in seconds (default 86400)
 }
 
 type ArtifactNotify struct {
@@ -67,6 +69,21 @@ type ArtifactAck struct {
 type ErrorResponse struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
+}
+
+type InviteAck struct {
+	Type       string `json:"type"`
+	Token      string `json:"token"`
+	TopicHash  string `json:"topic_hash"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+}
+
+type InviteData struct {
+	Type      string `json:"type"`
+	Token     string `json:"token"`
+	Payload   string `json:"payload"`
+	TopicHash string `json:"topic_hash"`
 }
 
 // --- Client ---
@@ -221,6 +238,10 @@ func (h *Hub) readPump(ctx context.Context, c *Client) {
 			h.handlePullRequest(ctx, c, &msg)
 		case "register_token":
 			h.handleRegisterToken(ctx, c, &msg)
+		case "invite_deposit":
+			h.handleInviteDeposit(ctx, c, &msg)
+		case "invite_claim":
+			h.handleInviteClaim(ctx, c, &msg)
 		default:
 			h.sendError(ctx, c, fmt.Sprintf("unknown message type: %s", msg.Type))
 		}
@@ -425,6 +446,12 @@ func (h *Hub) StartPruner(ctx context.Context, interval time.Duration) {
 				} else if pruned > 0 {
 					slog.Info("pruned expired artifacts", "count", pruned)
 				}
+				invPruned, err := h.store.PruneExpiredInvites(ctx)
+				if err != nil {
+					slog.Error("prune expired invites failed", "error", err)
+				} else if invPruned > 0 {
+					slog.Info("pruned expired invites", "count", invPruned)
+				}
 			}
 		}
 	}()
@@ -445,6 +472,89 @@ func (h *Hub) sendPushNotifications(ctx context.Context, topicHash, cid, senderD
 			slog.Warn("push notification failed", "device_id", t.DeviceID, "error", err)
 		}
 	}
+}
+
+const defaultInviteTTL int64 = 86400 // 24 hours
+
+func (h *Hub) handleInviteDeposit(ctx context.Context, c *Client, msg *IncomingMessage) {
+	if msg.Token == "" || msg.Payload == "" {
+		h.sendError(ctx, c, "invite_deposit requires token and payload")
+		return
+	}
+
+	ttl := defaultInviteTTL
+	if msg.ExpiresIn != nil && *msg.ExpiresIn > 0 {
+		ttl = *msg.ExpiresIn
+	}
+	expiresAt := time.Now().Unix() + ttl
+
+	// Derive rendezvous topic hash from token for the response
+	topicHash := inviteTopicHash(msg.Token)
+
+	inserted, err := h.store.InsertInvite(ctx, msg.Token, msg.Payload, topicHash, expiresAt)
+	if err != nil {
+		slog.Error("invite deposit failed", "error", err)
+		h.sendInviteAck(ctx, c, msg.Token, topicHash, "rejected", "internal error")
+		return
+	}
+	if !inserted {
+		h.sendInviteAck(ctx, c, msg.Token, topicHash, "rejected", "token already exists")
+		return
+	}
+
+	slog.Info("invite deposited", "token", msg.Token[:8]+"…", "expires_in", ttl)
+	h.sendInviteAck(ctx, c, msg.Token, topicHash, "accepted", "invite stored")
+}
+
+func (h *Hub) handleInviteClaim(ctx context.Context, c *Client, msg *IncomingMessage) {
+	if msg.Token == "" {
+		h.sendError(ctx, c, "invite_claim requires token")
+		return
+	}
+
+	inv, err := h.store.ClaimInvite(ctx, msg.Token)
+	if err != nil {
+		slog.Info("invite claim rejected", "token", msg.Token[:min(8, len(msg.Token))]+"…", "reason", err.Error())
+		h.sendInviteAck(ctx, c, msg.Token, "", "rejected", err.Error())
+		return
+	}
+
+	slog.Info("invite claimed and purged", "token", msg.Token[:8]+"…")
+
+	// Return the invite payload to the claimant
+	resp := InviteData{
+		Type:      "invite_data",
+		Token:     inv.Token,
+		Payload:   inv.Payload,
+		TopicHash: inv.TopicHash,
+	}
+	data, _ := json.Marshal(resp)
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+func (h *Hub) sendInviteAck(ctx context.Context, c *Client, token, topicHash, status, message string) {
+	resp := InviteAck{
+		Type:      "invite_ack",
+		Token:     token,
+		TopicHash: topicHash,
+		Status:    status,
+		Message:   message,
+	}
+	data, _ := json.Marshal(resp)
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+// inviteTopicHash derives the rendezvous topic from an invite token.
+// Both inviter and invitee independently compute this to meet on the relay.
+func inviteTopicHash(token string) string {
+	h := sha256.Sum256([]byte("veu-invite-v1:" + token))
+	return fmt.Sprintf("%x", h)
 }
 
 func (h *Hub) sendError(ctx context.Context, c *Client, message string) {
