@@ -336,6 +336,10 @@ struct HandshakeTab: View {
                 Text("Or invite someone remotely")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                Text("Creates a single-use link you can send via any messaging app. The link expires in 24 hours and self-destructs after one use.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
 
                 Button {
                     coordinator.generateInvite()
@@ -351,9 +355,14 @@ struct HandshakeTab: View {
         case .depositing, .claiming:
             VStack(spacing: 12) {
                 ProgressView()
-                Text(coordinator.invitePhase == .depositing ? "Creating invite…" : "Claiming invite…")
+                Text(coordinator.invitePhase == .depositing ? "Creating invite…" : "Joining circle…")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                if coordinator.invitePhase == .claiming {
+                    Text("Connecting to the person who invited you.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
         case .waitingForClaim:
@@ -361,9 +370,9 @@ struct HandshakeTab: View {
                 Image(systemName: "link.circle.fill")
                     .font(.system(size: 40))
                     .foregroundColor(.blue)
-                Text("Invite Ready")
+                Text("Step 1: Share the Link")
                     .font(.headline)
-                Text("Share this link with the person you want to invite.")
+                Text("Send this invite to the person you want to add. Use any app — iMessage, Signal, email, etc. The link only works once.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -375,6 +384,12 @@ struct HandshakeTab: View {
                         .background(Color(.systemGray6))
                         .cornerRadius(8)
                 }
+
+                Text("Keep this screen open — when they tap the link you'll both see a verification code.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
 
                 HStack(spacing: 16) {
                     Button {
@@ -395,12 +410,13 @@ struct HandshakeTab: View {
 
         case .verifying:
             VStack(spacing: 16) {
-                Text("Verify Short Code")
+                Text("Step 2: Verify Identity")
                     .font(.headline)
-                Text("Confirm this code matches on both devices\nvia call or message.")
+                Text("Call or text the person to confirm this code and color match on their screen. This prevents anyone from intercepting the invite.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal)
 
                 if let code = coordinator.inviteShortCode {
                     Text(code)
@@ -412,6 +428,10 @@ struct HandshakeTab: View {
                         .fill(Color(hex: hex))
                         .frame(width: 60, height: 60)
                 }
+
+                Text("Only tap Confirm if the code matches.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
 
                 HStack(spacing: 20) {
                     Button("Reject") {
@@ -435,9 +455,13 @@ struct HandshakeTab: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 48))
                     .foregroundColor(.green)
-                Text("Invite Accepted!")
+                Text("You're Connected!")
                     .font(.title2)
                     .fontWeight(.bold)
+                Text("You can now exchange end-to-end encrypted messages and media in this circle.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
                 Button("Done") {
                     coordinator.resetInvite()
                 }
