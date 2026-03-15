@@ -121,6 +121,15 @@ This document serves as the persistent context for the Veu protocol's developmen
   - [ ] Reveal with ephemeral key unwrap
   - [ ] Crypto tests for ephemeral keys
 
+### Phase 9 — Traffic Analysis Hardening 🛡️
+> _Defeat ISP-level metadata surveillance. Full plan: [`TRAFFIC_HARDENING.md`](./TRAFFIC_HARDENING.md)_
+
+- [ ] **Message Padding** (P0) — pad WebSocket frames to fixed bucket sizes (4KB/64KB/256KB/2MB)
+- [ ] **Cover Traffic** (P0) — periodic encrypted no-ops to mask timing patterns
+- [ ] **Domain Fronting** (P1) — Cloudflare CDN proxy to hide relay destination
+- [ ] **Encrypted Client Hello** (P1) — hide SNI via ECH (automatic with Cloudflare)
+- [ ] **DNS-over-HTTPS** (P2) — encrypted DNS resolution (redundant if CDN deployed)
+
 ## 🎯 POC Demo Script
 
 1. Alice opens Veu → generates Ghost identity from seed
