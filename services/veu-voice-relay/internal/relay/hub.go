@@ -8,6 +8,7 @@ import (
 "strings"
 "time"
 
+"github.com/veu-protocol/veu-voice-relay/internal/auth"
 "github.com/veu-protocol/veu-voice-relay/internal/session"
 "nhooyr.io/websocket"
 )
@@ -33,15 +34,20 @@ SDP            string `json:"sdp,omitempty"`
 Reason         string `json:"reason,omitempty"`
 Candidate      string `json:"candidate,omitempty"`
 Message        string `json:"message,omitempty"`
+// Auth fields (register only)
+PublicKey string `json:"public_key,omitempty"`
+Timestamp string `json:"timestamp,omitempty"`
+Signature string `json:"signature,omitempty"`
 }
 
 // Hub manages WebSocket connections and routes signaling and audio frames.
 type Hub struct {
-manager *session.Manager
+manager  *session.Manager
+verifier *auth.Verifier
 }
 
 func NewHub(mgr *session.Manager) *Hub {
-return &Hub{manager: mgr}
+return &Hub{manager: mgr, verifier: auth.NewVerifier()}
 }
 
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -113,9 +119,20 @@ h.sendError(conn, "unknown message type")
 
 func (h *Hub) handleRegister(conn *websocket.Conn, msg SignalingMessage, deviceKey *string) {
 if msg.DeviceID == "" || msg.CircleID == "" {
-h.sendError(conn, "device_id and circle_id required")
-return
+	h.sendError(conn, "device_id and circle_id required")
+	return
 }
+if msg.PublicKey == "" || msg.Timestamp == "" || msg.Signature == "" {
+	h.sendError(conn, "public_key, timestamp, and signature required")
+	return
+}
+
+if err := h.verifier.VerifyRegister(msg.DeviceID, msg.CircleID, msg.PublicKey, msg.Timestamp, msg.Signature); err != nil {
+	slog.Warn("register auth failed", "error", err, "device_id", msg.DeviceID)
+	h.sendError(conn, "authentication failed: "+err.Error())
+	return
+}
+
 key := msg.CircleID + ":" + msg.DeviceID
 h.manager.RegisterDevice(key, conn)
 *deviceKey = key

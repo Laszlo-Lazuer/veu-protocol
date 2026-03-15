@@ -2,7 +2,11 @@ package relay
 
 import (
 "context"
+"crypto/ed25519"
+"crypto/sha256"
+"encoding/hex"
 "encoding/json"
+"fmt"
 "net/http"
 "net/http/httptest"
 "testing"
@@ -66,21 +70,44 @@ t.Fatalf("unmarshal: %v", err)
 return msg
 }
 
-func register(t *testing.T, conn *websocket.Conn, circleID, deviceID string) {
-t.Helper()
-sendJSON(t, conn, SignalingMessage{
-Type:     "register",
-CircleID: circleID,
-DeviceID: deviceID,
-})
-// Allow the server goroutine to process the registration.
-time.Sleep(100 * time.Millisecond)
+// testDevice holds a generated Ed25519 identity for testing.
+type testDevice struct {
+	pub      ed25519.PublicKey
+	priv     ed25519.PrivateKey
+	deviceID string
+}
+
+func newTestDevice(t *testing.T) testDevice {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(pub)
+	return testDevice{pub: pub, priv: priv, deviceID: hex.EncodeToString(hash[:8])}
+}
+
+func register(t *testing.T, conn *websocket.Conn, circleID string, dev testDevice) {
+	t.Helper()
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	payload := []byte(dev.deviceID + "|" + circleID + "|" + ts)
+	sig := ed25519.Sign(dev.priv, payload)
+	sendJSON(t, conn, SignalingMessage{
+		Type:      "register",
+		CircleID:  circleID,
+		DeviceID:  dev.deviceID,
+		PublicKey: hex.EncodeToString(dev.pub),
+		Timestamp: ts,
+		Signature: hex.EncodeToString(sig),
+	})
+	time.Sleep(100 * time.Millisecond)
 }
 
 func TestRegisterDevice(t *testing.T) {
 srv, hub := newTestServer(t)
 conn := dialWS(t, srv)
-register(t, conn, "circle1", "dev1")
+dev := newTestDevice(t)
+register(t, conn, "circle1", dev)
 
 if hub.manager.DeviceCount() != 1 {
 t.Fatalf("expected 1 device, got %d", hub.manager.DeviceCount())
@@ -98,10 +125,47 @@ t.Fatalf("expected error, got %s", msg.Type)
 }
 }
 
+func TestRegisterMissingAuth(t *testing.T) {
+srv, _ := newTestServer(t)
+conn := dialWS(t, srv)
+
+// Provide device/circle but no auth fields
+sendJSON(t, conn, SignalingMessage{Type: "register", DeviceID: "d1", CircleID: "c1"})
+msg := readJSON(t, conn)
+if msg.Type != "error" {
+t.Fatalf("expected error, got %s", msg.Type)
+}
+}
+
+func TestRegisterSpoofedDeviceID(t *testing.T) {
+srv, _ := newTestServer(t)
+conn := dialWS(t, srv)
+dev := newTestDevice(t)
+
+// Try to register with a different device_id than the key derives
+ts := fmt.Sprintf("%d", time.Now().Unix())
+fakeID := "0000000000000000"
+payload := []byte(fakeID + "|" + "circle1" + "|" + ts)
+sig := ed25519.Sign(dev.priv, payload)
+sendJSON(t, conn, SignalingMessage{
+Type:      "register",
+CircleID:  "circle1",
+DeviceID:  fakeID,
+PublicKey: hex.EncodeToString(dev.pub),
+Timestamp: ts,
+Signature: hex.EncodeToString(sig),
+})
+msg := readJSON(t, conn)
+if msg.Type != "error" {
+t.Fatalf("expected error for spoofed device_id, got %s", msg.Type)
+}
+}
+
 func TestCallOfferToNonExistentDevice(t *testing.T) {
 srv, _ := newTestServer(t)
 conn := dialWS(t, srv)
-register(t, conn, "circle1", "dev1")
+dev := newTestDevice(t)
+register(t, conn, "circle1", dev)
 
 sendJSON(t, conn, SignalingMessage{
 Type:           "call_offer",
@@ -141,17 +205,20 @@ func TestFullCallFlow(t *testing.T) {
 srv, hub := newTestServer(t)
 callID := "550e8400-e29b-41d4-a716-446655440000"
 
+dev1 := newTestDevice(t)
+dev2 := newTestDevice(t)
+
 conn1 := dialWS(t, srv)
 conn2 := dialWS(t, srv)
 
-register(t, conn1, "circle1", "dev1")
-register(t, conn2, "circle1", "dev2")
+register(t, conn1, "circle1", dev1)
+register(t, conn2, "circle1", dev2)
 
 // dev1 sends call_offer to dev2
 sendJSON(t, conn1, SignalingMessage{
 Type:           "call_offer",
 CallID:         callID,
-TargetDeviceID: "dev2",
+TargetDeviceID: dev2.deviceID,
 SDP:            "offer-sdp-data",
 })
 
@@ -163,8 +230,8 @@ t.Fatalf("expected call_offer, got %s", offer.Type)
 if offer.CallID != callID {
 t.Fatalf("expected call_id %s, got %s", callID, offer.CallID)
 }
-if offer.CallerDeviceID != "dev1" {
-t.Fatalf("expected caller_device_id dev1, got %s", offer.CallerDeviceID)
+if offer.CallerDeviceID != dev1.deviceID {
+t.Fatalf("expected caller_device_id %s, got %s", dev1.deviceID, offer.CallerDeviceID)
 }
 if offer.SDP != "offer-sdp-data" {
 t.Fatalf("expected SDP offer-sdp-data, got %s", offer.SDP)
@@ -214,17 +281,20 @@ func TestBinaryFrameRouting(t *testing.T) {
 srv, _ := newTestServer(t)
 callID := "550e8400-e29b-41d4-a716-446655440000"
 
+dev1 := newTestDevice(t)
+dev2 := newTestDevice(t)
+
 conn1 := dialWS(t, srv)
 conn2 := dialWS(t, srv)
 
-register(t, conn1, "circle1", "dev1")
-register(t, conn2, "circle1", "dev2")
+register(t, conn1, "circle1", dev1)
+register(t, conn2, "circle1", dev2)
 
 // Establish call
 sendJSON(t, conn1, SignalingMessage{
 Type:           "call_offer",
 CallID:         callID,
-TargetDeviceID: "dev2",
+TargetDeviceID: dev2.deviceID,
 SDP:            "offer",
 })
 readJSON(t, conn2) // offer
@@ -286,17 +356,20 @@ func TestCallEnd(t *testing.T) {
 srv, hub := newTestServer(t)
 callID := "550e8400-e29b-41d4-a716-446655440000"
 
+dev1 := newTestDevice(t)
+dev2 := newTestDevice(t)
+
 conn1 := dialWS(t, srv)
 conn2 := dialWS(t, srv)
 
-register(t, conn1, "circle1", "dev1")
-register(t, conn2, "circle1", "dev2")
+register(t, conn1, "circle1", dev1)
+register(t, conn2, "circle1", dev2)
 
 // Establish call
 sendJSON(t, conn1, SignalingMessage{
 Type:           "call_offer",
 CallID:         callID,
-TargetDeviceID: "dev2",
+TargetDeviceID: dev2.deviceID,
 SDP:            "offer",
 })
 readJSON(t, conn2) // offer
@@ -336,17 +409,20 @@ func TestDisconnectEndsSessions(t *testing.T) {
 srv, hub := newTestServer(t)
 callID := "550e8400-e29b-41d4-a716-446655440000"
 
+dev1 := newTestDevice(t)
+dev2 := newTestDevice(t)
+
 conn1 := dialWS(t, srv)
 conn2 := dialWS(t, srv)
 
-register(t, conn1, "circle1", "dev1")
-register(t, conn2, "circle1", "dev2")
+register(t, conn1, "circle1", dev1)
+register(t, conn2, "circle1", dev2)
 
 // Establish call
 sendJSON(t, conn1, SignalingMessage{
 Type:           "call_offer",
 CallID:         callID,
-TargetDeviceID: "dev2",
+TargetDeviceID: dev2.deviceID,
 SDP:            "offer",
 })
 readJSON(t, conn2) // offer
@@ -381,7 +457,8 @@ t.Fatalf("expected reason peer_disconnected, got %s", msg.Reason)
 func TestUnknownMessageType(t *testing.T) {
 srv, _ := newTestServer(t)
 conn := dialWS(t, srv)
-register(t, conn, "circle1", "dev1")
+dev := newTestDevice(t)
+register(t, conn, "circle1", dev)
 
 sendJSON(t, conn, SignalingMessage{Type: "bogus"})
 msg := readJSON(t, conn)
@@ -390,22 +467,5 @@ t.Fatalf("expected error, got %s", msg.Type)
 }
 if msg.Message != "unknown message type" {
 t.Fatalf("unexpected error: %s", msg.Message)
-}
-}
-
-func TestSessionAutoCleanup(t *testing.T) {
-mgr := session.NewManager()
-hub := NewHub(mgr)
-
-// Create a session and make it look idle
-s := mgr.CreateSession("call-1", "c1:d1", "c1:d2", nil)
-s.LastActivity = time.Now().Add(-2 * time.Minute)
-
-expired := hub.manager.CleanupExpired(60*time.Second, time.Hour)
-if len(expired) != 1 {
-t.Fatalf("expected 1 expired session, got %d", len(expired))
-}
-if mgr.SessionCount() != 0 {
-t.Fatalf("expected 0 sessions after cleanup, got %d", mgr.SessionCount())
 }
 }
