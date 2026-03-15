@@ -68,5 +68,16 @@
 	</array>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.veu.protocol.invite</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>veu</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

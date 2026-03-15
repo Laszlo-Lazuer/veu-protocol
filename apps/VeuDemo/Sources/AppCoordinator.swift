@@ -85,6 +85,14 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var proximityVerified = false
     @Published var discoveredPeerName: String?
 
+    // Remote invite state
+    @Published var invitePhase: InvitePhase = .idle
+    @Published var inviteShortCode: String?
+    @Published var inviteAuraColorHex: String?
+    @Published var inviteLink: String?
+    @Published var pendingInviteToken: String?
+    private(set) var inviteService: InviteService?
+
     // MARK: - Internal
 
     private var handshakeVM: HandshakeViewModel?
@@ -330,6 +338,137 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         proximitySession = nil
     }
 
+    // MARK: - Remote Invite
+
+    /// Generate a single-use invite link for the active circle.
+    func generateInvite() {
+        guard let state = appState,
+              let circleID = state.activeCircleID else { return }
+
+        let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
+        let service = InviteService(relayURL: relay)
+        self.inviteService = service
+        invitePhase = .depositing
+
+        // Observe invite service state changes
+        service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
+            self?.invitePhase = phase
+        }.store(in: &cancellables)
+        service.$shortCode.receive(on: DispatchQueue.main).sink { [weak self] code in
+            self?.inviteShortCode = code
+        }.store(in: &cancellables)
+        service.$auraColorHex.receive(on: DispatchQueue.main).sink { [weak self] hex in
+            self?.inviteAuraColorHex = hex
+        }.store(in: &cancellables)
+        service.$inviteLink.receive(on: DispatchQueue.main).sink { [weak self] link in
+            self?.inviteLink = link
+        }.store(in: &cancellables)
+
+        Task { @MainActor in
+            do {
+                try await service.generateInvite(circleID: circleID)
+            } catch {
+                self.invitePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Handle a `veu://invite?id=<token>` deep link.
+    func handleInviteURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme == "veu",
+              components.host == "invite",
+              let token = components.queryItems?.first(where: { $0.name == "id" })?.value else {
+            return
+        }
+
+        pendingInviteToken = token
+
+        let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
+        let service = InviteService(relayURL: relay)
+        self.inviteService = service
+        invitePhase = .claiming
+
+        service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
+            self?.invitePhase = phase
+        }.store(in: &cancellables)
+        service.$shortCode.receive(on: DispatchQueue.main).sink { [weak self] code in
+            self?.inviteShortCode = code
+        }.store(in: &cancellables)
+        service.$auraColorHex.receive(on: DispatchQueue.main).sink { [weak self] hex in
+            self?.inviteAuraColorHex = hex
+        }.store(in: &cancellables)
+
+        Task { @MainActor in
+            do {
+                try await service.claimInvite(token: token)
+            } catch {
+                self.invitePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Confirm an invite handshake after SAS verification.
+    func confirmInvite() {
+        guard let service = inviteService,
+              let state = appState else { return }
+        do {
+            try service.confirm()
+
+            guard let circleID = service.circleID else { return }
+            print("[AppCoordinator] Invite confirmed, circleID=\(circleID.prefix(8))…")
+
+            // Register self as circle member
+            try state.ledger.insertCircleMember(
+                circleID: circleID,
+                deviceID: state.identity.deviceID,
+                publicKeyHex: state.identity.publicKeyHex,
+                callsign: state.identity.callsign
+            )
+
+            // Register peer as circle member
+            if let peerPubKeyData = service.peerPublicKeyData {
+                let peerCallsign = Identity.deriveCallsign(from: peerPubKeyData)
+                let peerDeviceID = Identity.deriveDeviceID(from: peerPubKeyData)
+                try state.ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: peerDeviceID,
+                    publicKeyHex: peerPubKeyData.map { String(format: "%02x", $0) }.joined(),
+                    callsign: peerCallsign
+                )
+            }
+
+            reloadTimeline()
+            reloadCircleMembers()
+
+            let shouldRestart = networkService?.isRunning == true || networkRunning
+            startNetwork(forceRestart: shouldRestart)
+            networkLog.append(shouldRestart ? "🔄 Network restarted for invited circle" : "🟢 Network started for invited circle")
+
+            invitePhase = .confirmed
+        } catch {
+            print("[AppCoordinator] Invite confirm failed: \(error)")
+            invitePhase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Reject a pending invite handshake.
+    func rejectInvite() {
+        inviteService?.reject()
+        resetInvite()
+    }
+
+    /// Reset invite state to idle.
+    func resetInvite() {
+        inviteService?.reset()
+        inviteService = nil
+        invitePhase = .idle
+        inviteShortCode = nil
+        inviteAuraColorHex = nil
+        inviteLink = nil
+        pendingInviteToken = nil
+    }
+
     private func updateHandshakeState(from vm: HandshakeViewModel) {
         handshakePhase = vm.phase
         shortCode = vm.shortCode
@@ -481,8 +620,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 // Determine conversation: DM uses peer device ID, circle chat uses circle ID
                 let convID: String
                 if let recipient = payload.recipientDeviceID {
-                    // DM: conversation keyed by the *other* party
-                    convID = payload.sender == myCallsign ? recipient : (entry.senderCallsign ?? payload.sender)
+                    // DM: conversation keyed by the *other* party's device ID
+                    convID = payload.sender == myCallsign ? recipient : (entry.senderID ?? payload.sender)
                 } else {
                     convID = state.activeCircleID ?? "unknown"
                 }
@@ -506,6 +645,21 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     private func buildConversations(circleID: String, myCallsign: String) {
         var convMap: [String: Conversation] = [:]
 
+        // Build device ID → callsign lookup from circle members
+        var callsignMap: [String: String] = [:]
+        if let state = appState,
+           let members = try? state.ledger.listCircleMembers(circleID: circleID) {
+            for member in members {
+                callsignMap[member.deviceID] = member.callsign
+            }
+        }
+        // Also extract callsigns from peer messages (covers reinstall when circle_members is sparse)
+        for msg in chatMessages where !msg.isMe && msg.conversationID != circleID {
+            if callsignMap[msg.conversationID] == nil {
+                callsignMap[msg.conversationID] = msg.sender
+            }
+        }
+
         // Always include circle chat
         convMap[circleID] = Conversation(
             id: circleID,
@@ -522,8 +676,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 if convID == circleID {
                     convType = .circle
                 } else {
-                    // DM — the convID is the peer's callsign or device ID
-                    convType = .dm(peerDeviceID: convID, peerCallsign: msg.isMe ? convID : msg.sender)
+                    // DM — convID is the peer's device ID; look up callsign for display
+                    let peerCallsign = msg.isMe ? (callsignMap[convID] ?? convID) : msg.sender
+                    convType = .dm(peerDeviceID: convID, peerCallsign: peerCallsign)
                 }
                 convMap[convID] = Conversation(
                     id: convID,

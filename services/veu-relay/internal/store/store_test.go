@@ -213,3 +213,152 @@ func TestDeleteArtifactNonExistent(t *testing.T) {
 		t.Fatalf("DeleteArtifact() error = %v", err)
 	}
 }
+
+// --- Invite tests ---
+
+func TestInsertAndClaimInvite(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	expiresAt := time.Now().Unix() + 3600
+	inserted, err := s.InsertInvite(ctx, "token-abc", "offer-payload", "topic-hash-1", expiresAt)
+	if err != nil {
+		t.Fatalf("InsertInvite() error = %v", err)
+	}
+	if !inserted {
+		t.Error("expected inserted=true for new invite")
+	}
+
+	inv, err := s.ClaimInvite(ctx, "token-abc")
+	if err != nil {
+		t.Fatalf("ClaimInvite() error = %v", err)
+	}
+	if inv.Token != "token-abc" || inv.Payload != "offer-payload" || inv.TopicHash != "topic-hash-1" {
+		t.Errorf("invite mismatch: %+v", inv)
+	}
+}
+
+func TestClaimInvitePurgesRecord(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	expiresAt := time.Now().Unix() + 3600
+	s.InsertInvite(ctx, "token-purge", "payload", "topic", expiresAt)
+
+	// First claim succeeds
+	_, err := s.ClaimInvite(ctx, "token-purge")
+	if err != nil {
+		t.Fatalf("first ClaimInvite() error = %v", err)
+	}
+
+	// Second claim fails — record is gone
+	_, err = s.ClaimInvite(ctx, "token-purge")
+	if err == nil {
+		t.Fatal("expected error on second claim, got nil")
+	}
+	if err.Error() != "invite not found" {
+		t.Errorf("expected 'invite not found', got %q", err.Error())
+	}
+}
+
+func TestClaimInviteNonExistent(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	_, err := s.ClaimInvite(ctx, "no-such-token")
+	if err == nil {
+		t.Fatal("expected error for non-existent invite")
+	}
+	if err.Error() != "invite not found" {
+		t.Errorf("expected 'invite not found', got %q", err.Error())
+	}
+}
+
+func TestClaimInviteExpired(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	past := time.Now().Unix() - 60
+	s.InsertInvite(ctx, "token-expired", "payload", "topic", past)
+
+	_, err := s.ClaimInvite(ctx, "token-expired")
+	if err == nil {
+		t.Fatal("expected error for expired invite")
+	}
+	if err.Error() != "invite expired" {
+		t.Errorf("expected 'invite expired', got %q", err.Error())
+	}
+
+	// Verify the expired invite was also purged
+	_, err = s.ClaimInvite(ctx, "token-expired")
+	if err == nil || err.Error() != "invite not found" {
+		t.Errorf("expired invite should be purged, got %v", err)
+	}
+}
+
+func TestInsertInviteDuplicateToken(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	expiresAt := time.Now().Unix() + 3600
+	s.InsertInvite(ctx, "token-dup", "payload1", "topic1", expiresAt)
+
+	inserted, err := s.InsertInvite(ctx, "token-dup", "payload2", "topic2", expiresAt)
+	if err != nil {
+		t.Fatalf("InsertInvite() error = %v", err)
+	}
+	if inserted {
+		t.Error("expected inserted=false for duplicate token")
+	}
+}
+
+func TestPruneExpiredInvites(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	past := time.Now().Unix() - 60
+	future := time.Now().Unix() + 3600
+
+	s.InsertInvite(ctx, "expired-inv", "p1", "t1", past)
+	s.InsertInvite(ctx, "alive-inv", "p2", "t2", future)
+
+	pruned, err := s.PruneExpiredInvites(ctx)
+	if err != nil {
+		t.Fatalf("PruneExpiredInvites() error = %v", err)
+	}
+	if pruned != 1 {
+		t.Errorf("expected 1 pruned invite, got %d", pruned)
+	}
+
+	// Alive invite should still be claimable
+	inv, err := s.ClaimInvite(ctx, "alive-inv")
+	if err != nil {
+		t.Fatalf("ClaimInvite() error = %v", err)
+	}
+	if inv.Payload != "p2" {
+		t.Errorf("expected payload p2, got %s", inv.Payload)
+	}
+
+	// Expired invite should be gone
+	_, err = s.ClaimInvite(ctx, "expired-inv")
+	if err == nil {
+		t.Error("expected error for pruned invite")
+	}
+}
+
+func TestDeleteInvite(t *testing.T) {
+	s := tempStore(t)
+	ctx := context.Background()
+
+	expiresAt := time.Now().Unix() + 3600
+	s.InsertInvite(ctx, "token-del", "payload", "topic", expiresAt)
+
+	if err := s.DeleteInvite(ctx, "token-del"); err != nil {
+		t.Fatalf("DeleteInvite() error = %v", err)
+	}
+
+	_, err := s.ClaimInvite(ctx, "token-del")
+	if err == nil || err.Error() != "invite not found" {
+		t.Errorf("expected 'invite not found' after delete, got %v", err)
+	}
+}

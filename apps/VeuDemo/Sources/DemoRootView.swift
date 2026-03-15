@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import ImageIO
 import VeuApp
 import VeuGlaze
@@ -63,6 +64,10 @@ struct DemoRootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(coordinator.sealError ?? "")
+        }
+        .onOpenURL { url in
+            coordinator.handleInviteURL(url)
+            selectedTab = 1 // Switch to Handshake tab
         }
     }
 }
@@ -168,22 +173,37 @@ struct IdentityTab: View {
 struct HandshakeTab: View {
     let appState: AppState
     @ObservedObject var coordinator: AppCoordinator
+    @State private var showShareSheet = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                EmeraldView(
-                    phase: coordinator.handshakePhase,
-                    progress: coordinator.handshakeProgress
-                )
-                .frame(height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+            ScrollView {
+                VStack(spacing: 20) {
+                    EmeraldView(
+                        phase: coordinator.handshakePhase,
+                        progress: coordinator.handshakeProgress
+                    )
+                    .frame(height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                handshakeContent
-                Spacer()
+                    handshakeContent
+
+                    // Remote invite section (only when proximity handshake is idle)
+                    if coordinator.handshakePhase == .idle {
+                        Divider().padding(.vertical, 8)
+                        inviteContent
+                    }
+
+                    Spacer()
+                }
+                .padding()
             }
-            .padding()
             .navigationTitle("Emerald Handshake")
+            .sheet(isPresented: $showShareSheet) {
+                if let link = coordinator.inviteLink, let url = URL(string: link) {
+                    ShareSheet(activityItems: [url])
+                }
+            }
         }
     }
 
@@ -303,6 +323,235 @@ struct HandshakeTab: View {
                 coordinator.resetHandshake()
             }
             .buttonStyle(.bordered)
+        }
+    }
+
+    // MARK: - Remote Invite UI
+
+    @ViewBuilder
+    private var inviteContent: some View {
+        switch coordinator.invitePhase {
+        case .idle:
+            VStack(spacing: 12) {
+                Text("Or invite someone remotely")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text("Creates a single-use link you can send via any messaging app. The link expires in 24 hours and self-destructs after one use.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Button {
+                    coordinator.generateInvite()
+                } label: {
+                    Label("Invite to Circle", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .disabled(appState.activeCircleID == nil)
+            }
+
+        case .depositing, .claiming:
+            VStack(spacing: 12) {
+                ProgressView()
+                Text(coordinator.invitePhase == .depositing ? "Creating invite…" : "Joining circle…")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                if coordinator.invitePhase == .claiming {
+                    Text("Connecting to the person who invited you.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+        case .waitingForClaim:
+            VStack(spacing: 16) {
+                Image(systemName: "link.circle.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.blue)
+                Text("Step 1: Share the Link")
+                    .font(.headline)
+                Text("Send this invite to the person you want to add. Use any app — iMessage, Signal, email, etc. The link only works once.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+
+                if let link = coordinator.inviteLink {
+                    Text(link)
+                        .font(.system(.caption, design: .monospaced))
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                }
+
+                Text("Keep this screen open — when they tap the link you'll both see a verification code.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+
+                HStack(spacing: 16) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+
+                    Button("Cancel") {
+                        coordinator.resetInvite()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+            }
+
+        case .verifying:
+            VStack(spacing: 16) {
+                Text("Step 2: Verify Identity")
+                    .font(.headline)
+                Text("Call or text the person to confirm this code and color match on their screen. This prevents anyone from intercepting the invite.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+
+                if let code = coordinator.inviteShortCode {
+                    Text(code)
+                        .font(.system(size: 36, weight: .bold, design: .monospaced))
+                        .kerning(4)
+                }
+                if let hex = coordinator.inviteAuraColorHex {
+                    Circle()
+                        .fill(Color(hex: hex))
+                        .frame(width: 60, height: 60)
+                }
+
+                Text("Only tap Confirm if the code matches.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 20) {
+                    Button("Reject") {
+                        coordinator.rejectInvite()
+                        HapticEngine.burnClick()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+
+                    Button("Confirm") {
+                        coordinator.confirmInvite()
+                        HapticEngine.handshakeHeartbeat()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                }
+            }
+
+        case .confirmed:
+            VStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.green)
+                Text("You're Connected!")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Text("You can now exchange end-to-end encrypted messages and media in this circle.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Done") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+
+        case .failed(let message):
+            VStack(spacing: 12) {
+                Image(systemName: "xmark.octagon")
+                    .font(.system(size: 48))
+                    .foregroundColor(.red)
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Try Again") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+
+        case .expired:
+            VStack(spacing: 12) {
+                Image(systemName: "clock.badge.xmark")
+                    .font(.system(size: 48))
+                    .foregroundColor(.orange)
+                Text("Invite expired")
+                    .foregroundColor(.secondary)
+                Button("Create New Invite") {
+                    coordinator.resetInvite()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+}
+
+// MARK: - Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Photo Library Picker
+
+import PhotosUI
+
+struct PhotoLibraryPicker: UIViewControllerRepresentable {
+    let onPick: (Data) -> Void
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let onPick: (Data) -> Void
+
+        init(onPick: @escaping (Data) -> Void) {
+            self.onPick = onPick
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard let provider = results.first?.itemProvider,
+                  provider.canLoadObject(ofClass: UIImage.self) else { return }
+
+            provider.loadObject(ofClass: UIImage.self) { object, _ in
+                guard let image = object as? UIImage,
+                      let data = image.jpegData(compressionQuality: 1.0) else { return }
+                DispatchQueue.main.async {
+                    self.onPick(data)
+                }
+            }
         }
     }
 }
@@ -1025,6 +1274,7 @@ struct ChatBubble: View {
     var myCallsign: String = ""
     var onReaction: ((String) -> Void)?
     @State private var showReactionPicker = false
+    @State private var safariURL: URL?
 
     private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
 
@@ -1040,10 +1290,16 @@ struct ChatBubble: View {
                         .fontWeight(.semibold)
                 }
 
-                Text(message.text)
+                LinkedText(
+                    text: message.text,
+                    foregroundColor: message.isMe ? .white : .primary,
+                    linkColor: message.isMe
+                        ? Color(red: 0.75, green: 0.95, blue: 0.85)
+                        : Color(red: 0.2, green: 0.5, blue: 0.9),
+                    onTapURL: { url in safariURL = url }
+                )
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .foregroundColor(message.isMe ? .white : .primary)
                     .background(
                         RoundedRectangle(cornerRadius: 18)
                             .fill(message.isMe
@@ -1107,7 +1363,112 @@ struct ChatBubble: View {
             if !message.isMe { Spacer(minLength: 60) }
         }
         .animation(.spring(response: 0.25), value: showReactionPicker)
+        .sheet(item: $safariURL) { url in
+            PrivateBrowserView(url: url)
+        }
     }
+}
+
+// MARK: - Linked Text
+
+/// Renders message text with tappable, sanitized links.
+/// URLs are detected, stripped of tracking params, and opened in an
+/// ephemeral in-app browser. No referrer, no shared cookies.
+struct LinkedText: View {
+    let text: String
+    var foregroundColor: Color = .primary
+    var linkColor: Color = .blue
+    var onTapURL: ((URL) -> Void)?
+
+    // Simple URL regex — matches http(s) URLs in message text
+    private static let urlPattern = try! NSRegularExpression(
+        pattern: #"https?://[^\s<>\"\]\)]+"#,
+        options: .caseInsensitive
+    )
+
+    var body: some View {
+        let (styledText, urls) = buildStyledText()
+        styledText
+            .onTapGesture {
+                if let url = urls.first {
+                    onTapURL?(url)
+                }
+            }
+    }
+
+    private func buildStyledText() -> (Text, [URL]) {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let matches = Self.urlPattern.matches(in: text, range: fullRange)
+
+        if matches.isEmpty {
+            return (Text(text).foregroundColor(foregroundColor), [])
+        }
+
+        var result = Text("")
+        var lastIndex = text.startIndex
+        var urls: [URL] = []
+
+        for match in matches {
+            guard let range = Range(match.range, in: text) else { continue }
+
+            // Text before the URL
+            if lastIndex < range.lowerBound {
+                result = result + Text(text[lastIndex..<range.lowerBound])
+                    .foregroundColor(foregroundColor)
+            }
+
+            // The URL itself — display domain for cleanliness
+            let urlString = String(text[range])
+            let displayText = URLComponents(string: urlString)?.host ?? urlString
+            if let sanitized = URLSanitizer.sanitize(urlString) {
+                result = result + Text(displayText)
+                    .foregroundColor(linkColor)
+                    .underline()
+                urls.append(sanitized)
+            } else {
+                result = result + Text(urlString)
+                    .foregroundColor(foregroundColor)
+            }
+            lastIndex = range.upperBound
+        }
+
+        // Trailing text after last URL
+        if lastIndex < text.endIndex {
+            result = result + Text(text[lastIndex..<text.endIndex])
+                .foregroundColor(foregroundColor)
+        }
+
+        return (result, urls)
+    }
+}
+
+// MARK: - Private Browser
+
+import SafariServices
+
+/// Wraps SFSafariViewController in ephemeral mode — no cookies, no history,
+/// no referrer leaks back to the app or between sessions.
+struct PrivateBrowserView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let config = SFSafariViewController.Configuration()
+        config.entersReaderIfAvailable = false
+        config.barCollapsingEnabled = true
+
+        let vc = SFSafariViewController(url: url, configuration: config)
+        vc.preferredBarTintColor = .black
+        vc.preferredControlTintColor = UIColor(red: 0.31, green: 0.78, blue: 0.47, alpha: 1)
+        vc.dismissButtonStyle = .close
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
 
 // MARK: - Reaction Picker
@@ -1620,13 +1981,18 @@ struct CaptureSheet: View {
     @State private var burnHours: Double = 24
     @State private var selectedRecipients: Set<String> = []  // Device IDs
     @State private var showRecipientPicker = false
+    @State private var showPhotoPicker = false
 
-    // Async compression state — keeps heavy work off the main thread.
-    @State private var isCompressing = false
+    // Processing state — only runs when Seal is tapped.
+    @State private var isProcessing = false
+    @State private var processingStatus = ""
+
+    // Legacy compat — kept for compressForSending signature
     @State private var compressedData: Data?
     @State private var compressedSize: Int?
     @State private var compressionError: String?
     @State private var compressionTask: Task<Void, Never>?
+    @State private var isCompressing: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -1637,7 +2003,6 @@ struct CaptureSheet: View {
                         capturedData = imageData
                         capturedImage = UIImage(data: imageData)
                         useCamera = false
-                        triggerCompression()
                     }
                     .frame(height: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -1672,7 +2037,7 @@ struct CaptureSheet: View {
                         .cornerRadius(12)
                     }
 
-                    // Photo preview + compression status
+                    // Photo preview
                     if let preview = capturedImage {
                         ZStack {
                             Image(uiImage: preview)
@@ -1682,61 +2047,67 @@ struct CaptureSheet: View {
                                 .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                            if isCompressing {
-                                Color.black.opacity(0.5)
+                            if isProcessing {
+                                Color.black.opacity(0.6)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
                                 VStack(spacing: 8) {
                                     ProgressView()
                                         .tint(.white)
-                                    Text("Optimizing for relay…")
+                                    Text(processingStatus)
                                         .font(.caption)
                                         .foregroundColor(.white)
                                 }
                             }
 
-                            // Retake button
-                            VStack {
-                                HStack {
-                                    Spacer()
-                                    Button {
-                                        capturedData = nil
-                                        capturedImage = nil
-                                        compressedData = nil
-                                        compressedSize = nil
-                                        compressionError = nil
-                                        useCamera = true
-                                    } label: {
-                                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                                            .font(.caption)
-                                            .padding(8)
-                                            .background(.ultraThinMaterial)
-                                            .clipShape(Circle())
+                            // Retake + Library buttons (top row)
+                            if !isProcessing {
+                                VStack {
+                                    HStack {
+                                        Button {
+                                            showPhotoPicker = true
+                                        } label: {
+                                            Image(systemName: "photo.on.rectangle")
+                                                .font(.caption)
+                                                .padding(8)
+                                                .background(.ultraThinMaterial)
+                                                .clipShape(Circle())
+                                        }
+                                        .padding(8)
+                                        Spacer()
+                                        Button {
+                                            capturedData = nil
+                                            capturedImage = nil
+                                            useCamera = true
+                                        } label: {
+                                            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                                .font(.caption)
+                                                .padding(8)
+                                                .background(.ultraThinMaterial)
+                                                .clipShape(Circle())
+                                        }
+                                        .padding(8)
                                     }
-                                    .padding(8)
+                                    Spacer()
                                 }
-                                Spacer()
                             }
                         }
                         .frame(height: 200)
 
-                        // Size info (uses cached result, never recompresses)
                         if let raw = capturedData {
-                            if let size = compressedSize {
-                                Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(size))",
-                                      systemImage: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                    .font(.caption)
-                            } else if let err = compressionError {
-                                Label(err, systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.orange)
-                                    .font(.caption)
-                            } else if !isCompressing {
-                                Label("Photo: \(formatBytes(raw.count))",
-                                      systemImage: "photo.fill")
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
-                            }
+                            Label("Photo: \(formatBytes(raw.count))",
+                                  systemImage: "photo.fill")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
                         }
+                    } else {
+                        // No photo yet — show Library button alongside Camera
+                        Button {
+                            showPhotoPicker = true
+                        } label: {
+                            Label("Choose from Library", systemImage: "photo.on.rectangle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
 
                     TextField("Enter message…", text: $messageText, axis: .vertical)
@@ -1747,7 +2118,7 @@ struct CaptureSheet: View {
                     recipientSelector
 
                     VStack(alignment: .leading) {
-                        Text("Burn Timer: \(Int(burnHours))h")
+                        Text("Burn Timer: \(formatBurnTimer(burnHours))")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         Slider(value: $burnHours, in: 1...168, step: 1)
@@ -1755,19 +2126,19 @@ struct CaptureSheet: View {
                     }
 
                     if sealed {
-                        Label("Sealed & Queued for Sync", systemImage: "checkmark.seal.fill")
+                        Label("Sealed ✓", systemImage: "checkmark.seal.fill")
                             .foregroundColor(.green)
                             .font(.headline)
                     } else {
                         Button {
                             sealContent()
                         } label: {
-                            Label(isCompressing ? "Processing…" : "Seal", systemImage: "lock.shield")
+                            Label("Seal", systemImage: "lock.shield")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
-                        .disabled((capturedData == nil && messageText.isEmpty) || isCompressing)
+                        .disabled((capturedData == nil && messageText.isEmpty) || isProcessing)
                     }
                 }
 
@@ -1784,42 +2155,15 @@ struct CaptureSheet: View {
             .sheet(isPresented: $showRecipientPicker) {
                 recipientPickerSheet
             }
-        }
-    }
-
-    /// Kick off compression on a background thread. Only recompresses
-    /// when the raw image data changes — typing a caption won't retrigger.
-    private func triggerCompression() {
-        compressionTask?.cancel()
-        guard let raw = capturedData else { return }
-
-        isCompressing = true
-        compressedData = nil
-        compressedSize = nil
-        compressionError = nil
-
-        compressionTask = Task.detached(priority: .userInitiated) {
-            do {
-                let caption = ""  // Preview uses empty caption; seal uses actual caption.
-                let burnAfter = Int(Date().timeIntervalSince1970) + Int(24 * 3600)
-                let compressed = try await MainActor.run {
-                    try compressForSending(raw, caption: caption, burnAfter: burnAfter, targetRecipients: nil)
-                }
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    compressedData = compressed
-                    compressedSize = compressed.count
-                    isCompressing = false
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    compressionError = error.localizedDescription
-                    isCompressing = false
+            .sheet(isPresented: $showPhotoPicker) {
+                PhotoLibraryPicker { imageData in
+                    capturedData = imageData
+                    capturedImage = UIImage(data: imageData)
                 }
             }
         }
     }
+
     
     @ViewBuilder
     private var recipientSelector: some View {
@@ -2094,40 +2438,80 @@ struct CaptureSheet: View {
         return "\(bytes) B"
     }
 
+    private func formatBurnTimer(_ hours: Double) -> String {
+        let h = Int(hours)
+        if h < 24 {
+            return "\(h)h"
+        }
+        let days = hours / 24.0
+        if days == days.rounded() {
+            return "\(Int(days))d"
+        }
+        return String(format: "%.1fd", days)
+    }
+
     private func sealContent() {
         let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
-        
-        // Convert selected recipients to array (nil = everyone)
         let targets: [String]? = selectedRecipients.isEmpty ? nil : Array(selectedRecipients)
 
-        do {
-            let data: Data
-            if let imageData = capturedData {
-                // Use pre-compressed data when available; fall back to on-demand compression.
-                let compressed: Data
-                if let cached = compressedData {
-                    compressed = cached
-                } else {
-                    compressed = try compressForSending(
+        // Text-only message — no processing needed
+        guard let imageData = capturedData else {
+            do {
+                let data = Data(caption.utf8)
+                guard !data.isEmpty else { return }
+                coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+                HapticEngine.handshakeHeartbeat()
+                sealed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    isPresented = false
+                }
+            }
+            return
+        }
+
+        // Photo — run sanitization + compression on background thread
+        isProcessing = true
+        processingStatus = "Removing sensor fingerprint…"
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { processingStatus = "Removing sensor fingerprint…" }
+
+                let compressed = try await MainActor.run {
+                    try compressForSending(
                         imageData,
                         caption: caption,
                         burnAfter: burnEpoch,
                         targetRecipients: targets
                     )
                 }
-                data = try encodePostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
-            } else {
-                data = Data(caption.utf8)
+
+                await MainActor.run { processingStatus = "Encrypting…" }
+                let data = try await MainActor.run {
+                    try encodePostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
+                }
+
+                await MainActor.run {
+                    coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+                    HapticEngine.handshakeHeartbeat()
+                    processingStatus = "Sealed ✓"
+                    sealed = true
+                    isProcessing = false
+                }
+
+                // Brief pause to show confirmation, then dismiss
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                await MainActor.run {
+                    isPresented = false
+                }
+            } catch {
+                await MainActor.run {
+                    isProcessing = false
+                    processingStatus = ""
+                    coordinator.sealError = error.localizedDescription
+                }
             }
-
-            guard !data.isEmpty else { return }
-
-            coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
-            HapticEngine.handshakeHeartbeat()
-            sealed = true
-        } catch {
-            coordinator.sealError = error.localizedDescription
         }
     }
 }
