@@ -15,7 +15,8 @@ public final class KeychainService {
     
     // MARK: - Identity Storage
     
-    /// Save identity to Keychain. Overwrites existing if present.
+    /// Save identity to Keychain, synced via iCloud Keychain so it survives app
+    /// deletion and TestFlight ↔ Xcode switching on the same device.
     public func saveIdentity(_ identity: Identity) throws {
         let data = try JSONEncoder().encode(identity)
         
@@ -23,22 +24,23 @@ public final class KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: identityAccount,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+            kSecAttrSynchronizable as String: true,
             kSecValueData as String: data
         ]
         
-        // Try to add; if exists, update
         var status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecDuplicateItem {
-            let updateQuery: [String: Any] = [
+            // Delete any existing item (may be non-sync from a previous install)
+            // then re-add as synchronizable — accessibility can't be changed via update.
+            let deleteQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrAccount as String: identityAccount
+                kSecAttrAccount as String: identityAccount,
+                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
             ]
-            let updateAttrs: [String: Any] = [
-                kSecValueData as String: data
-            ]
-            status = SecItemUpdate(updateQuery as CFDictionary, updateAttrs as CFDictionary)
+            SecItemDelete(deleteQuery as CFDictionary)
+            status = SecItemAdd(query as CFDictionary, nil)
         }
         
         guard status == errSecSuccess else {
@@ -52,6 +54,7 @@ public final class KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: identityAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -73,7 +76,8 @@ public final class KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: identityAccount
+            kSecAttrAccount as String: identityAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
         SecItemDelete(query as CFDictionary)
     }
