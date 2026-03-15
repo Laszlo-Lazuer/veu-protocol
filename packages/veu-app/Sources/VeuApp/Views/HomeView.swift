@@ -2,6 +2,7 @@
 import SwiftUI
 import VeuGlaze
 import VeuAuth
+import VeuGhost
 
 /// Root view for the Veu POC app — tab-based navigation.
 public struct HomeView: View {

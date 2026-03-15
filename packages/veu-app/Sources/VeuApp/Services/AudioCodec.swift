@@ -100,9 +100,10 @@ public final class AudioCodec {
     private func opusEncode(_ pcmData: Data) -> Data? {
         guard let encoder else { return nil }
 
-        var outData = Data(count: 512)
-        var consumed = false
+        let outCapacity = 512
+        var outData = Data(count: outCapacity)
 
+        var resultData: Data?
         let status: OSStatus = pcmData.withUnsafeBytes { inRaw in
             outData.withUnsafeMutableBytes { outRaw in
                 guard let inBase = inRaw.baseAddress,
@@ -116,7 +117,7 @@ public final class AudioCodec {
                 )
 
                 var outBuf = AudioBuffer(mNumberChannels: 1,
-                                         mDataByteSize: UInt32(outData.count),
+                                         mDataByteSize: UInt32(outCapacity),
                                          mData: outBase)
                 var outList = AudioBufferList(mNumberBuffers: 1, mBuffers: outBuf)
                 var numPackets: UInt32 = 1
@@ -124,12 +125,13 @@ public final class AudioCodec {
                 let res = AudioConverterFillComplexBuffer(
                     encoder, encodeInputProc, &ctx, &numPackets, &outList, nil)
 
-                outData = Data(bytes: outList.mBuffers.mData!,
+                resultData = Data(bytes: outList.mBuffers.mData!,
                                count: Int(outList.mBuffers.mDataByteSize))
                 return res
             }
         }
-        return (status == noErr && !outData.isEmpty) ? outData : nil
+        guard let result = resultData else { return nil }
+        return (status == noErr && !result.isEmpty) ? result : nil
     }
 
     // MARK: - Opus Decode
@@ -140,6 +142,7 @@ public final class AudioCodec {
         let outBytes = 960 * 2 // 960 samples × 2 bytes
         var outData = Data(count: outBytes)
 
+        var writtenBytes = 0
         let status: OSStatus = opusPacket.withUnsafeBytes { inRaw in
             outData.withUnsafeMutableBytes { outRaw in
                 guard let inBase = inRaw.baseAddress,
@@ -160,12 +163,12 @@ public final class AudioCodec {
                 let res = AudioConverterFillComplexBuffer(
                     decoder, decodeInputProc, &ctx, &numPackets, &outList, nil)
 
-                let written = Int(outList.mBuffers.mDataByteSize)
-                if written > 0 && written <= outBytes {
-                    outData = outData.prefix(written)
-                }
+                writtenBytes = Int(outList.mBuffers.mDataByteSize)
                 return res
             }
+        }
+        if writtenBytes > 0 && writtenBytes <= outBytes {
+            outData = outData.prefix(writtenBytes)
         }
         // -1 is returned when input callback signals "no more data" — that's fine
         return (status == noErr || status == -1) && !outData.isEmpty ? outData : nil

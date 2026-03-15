@@ -266,12 +266,4 @@ public final class VoiceRelayTransport {
         task.send(.string(text), completionHandler: completion ?? { _ in })
     }
 }
-
-// MARK: - Data Hex Extension
-
-private extension Data {
-    var hexString: String {
-        map { String(format: "%02x", $0) }.joined()
-    }
-}
 #endif

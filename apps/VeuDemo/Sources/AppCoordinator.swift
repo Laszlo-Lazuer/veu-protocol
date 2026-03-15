@@ -902,10 +902,13 @@ extension AppCoordinator: ProximitySessionDelegate {
         let manager = VoiceCallManager()
         manager.deviceID = state.identity.deviceID
         manager.callsign = state.identity.callsign
-        if let circleID = state.activeCircleID,
-           let circleKey = state.circleKeys[circleID] {
-            manager.circleKey = circleKey.keyData
+        if let circleID = state.activeCircleID {
+            manager.circleID = circleID
+            if let circleKey = state.circleKeys[circleID] {
+                manager.circleKey = circleKey.keyData
+            }
         }
+        manager.signingKey = try? state.identity.signingPrivateKey
         manager.sendSignal = { [weak self] payload in
             self?.sendVoiceSignal(payload)
         }
