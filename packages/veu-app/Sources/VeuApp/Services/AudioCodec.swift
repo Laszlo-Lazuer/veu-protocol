@@ -308,8 +308,11 @@ private func decodeInputProc(
     ctx.pointee.done = true
     return noErr
 }
+#endif
 
-// MARK: - Jitter Buffer
+// MARK: - Jitter Buffer (platform-independent)
+
+import Foundation
 
 /// Reorders out-of-sequence audio frames and handles gaps.
 public final class JitterBuffer {
@@ -353,4 +356,3 @@ public final class JitterBuffer {
         nextExpectedSeq = 0
     }
 }
-#endif

@@ -49,7 +49,8 @@ public final class VoiceCallManager: ObservableObject {
     private let codec = AudioCodec()
     private let jitterBuffer = JitterBuffer(maxDelay: 5)
     private var udpSocket: VoiceUDPSocket?
-    private var peerUDPConnected = false
+    /// Whether a direct UDP connection is active (readable by UI for transport badge).
+    public internal(set) var peerUDPConnected = false
     public let callKitManager = CallKitManager()
     /// Voice relay WebSocket transport — fallback when direct UDP isn't available.
     private var relayTransport: VoiceRelayTransport?
@@ -57,12 +58,14 @@ public final class VoiceCallManager: ObservableObject {
     private var isOutgoingCall = false
     /// Whether CallKit successfully reported this call.
     private var callKitActive = false
-    /// Whether the relay transport is actively handling audio for this call.
-    private var usingRelay = false
+    /// Whether the relay transport is actively handling audio (readable by UI for transport badge).
+    public internal(set) var usingRelay = false
     /// Timer that fires after UDP grace period to fall back to relay.
     private var udpFallbackTimer: Timer?
     /// How long to wait for UDP to connect before falling back to relay.
     private static let udpGracePeriod: TimeInterval = 3.0
+    /// Monitors network path changes for mid-call transport switching.
+    private let networkMonitor = NetworkTransitionManager()
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
@@ -80,6 +83,7 @@ public final class VoiceCallManager: ObservableObject {
     public init() {
         #if os(iOS)
         setupCallKitCallbacks()
+        setupNetworkMonitor()
         #endif
     }
 
@@ -173,6 +177,53 @@ public final class VoiceCallManager: ObservableObject {
         relayTransport?.disconnect()
         relayTransport = nil
         usingRelay = false
+    }
+
+    /// Wire network path monitor to handle mid-call WiFi ↔ cellular transitions.
+    private func setupNetworkMonitor() {
+        networkMonitor.onPathChanged = { [weak self] old, new in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+
+            print("[VoiceCall] 🔄 Network changed mid-call: \(old) → \(new)")
+
+            if new == .wifi && !self.peerUDPConnected {
+                // Switched to WiFi — try direct UDP (peer might now be on same LAN)
+                self.connectUDPToPeer()
+                if self.peerUDPConnected {
+                    print("[VoiceCall] ↑ Upgraded to direct UDP after WiFi reconnect")
+                    self.teardownRelayTransport()
+                }
+            } else if old == .wifi && new == .cellular && self.peerUDPConnected {
+                // Lost WiFi, on cellular — UDP won't work across NAT, fall back to relay
+                print("[VoiceCall] ↓ Lost WiFi, falling back to relay for audio")
+                self.peerUDPConnected = false
+                self.setupRelayTransport()
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+        networkMonitor.onNetworkLost = { [weak self] in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            print("[VoiceCall] ❌ Network lost mid-call — audio paused")
+        }
+        networkMonitor.onNetworkRestored = { [weak self] pathType in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            print("[VoiceCall] ✅ Network restored (\(pathType)) — resuming audio")
+            if pathType == .wifi {
+                self.connectUDPToPeer()
+            }
+            if !self.peerUDPConnected && !self.usingRelay {
+                self.setupRelayTransport()
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+        networkMonitor.start()
     }
     #endif
 

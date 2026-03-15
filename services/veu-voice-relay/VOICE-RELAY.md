@@ -15,6 +15,56 @@ Real-time encrypted voice relay for the VEU protocol. Acts as an audio bridge be
 - **No decryption** — the relay sees only AES-256-GCM ciphertext
 - **No transcoding** — frames are forwarded byte-for-byte
 
+### Transport Priority
+
+The voice relay is a **fallback**, not the default. Audio transport follows the same priority as messaging:
+
+| Priority | Transport | When Used |
+|----------|-----------|-----------|
+| 1st | **UDP (direct)** | Peers on same LAN/WiFi |
+| 2nd | **Voice Relay (WebSocket)** | Peers on different networks, behind NAT |
+| 3rd | **TCP mesh** | Last resort fallback |
+
+Signaling always goes through GhostMessage (Local → Mesh → Global relay).
+The voice relay handles only audio frame forwarding.
+
+### Network Transition
+
+Mid-call WiFi ↔ cellular handoffs are handled automatically:
+- **WiFi → cellular**: UDP drops, relay takes over seamlessly
+- **cellular → WiFi**: Attempts UDP reconnect, upgrades if peer is reachable
+- **Network loss**: Audio paused, resumes on reconnect
+
+## Authentication
+
+Registration requires an Ed25519-signed token proving device identity:
+
+```json
+{
+  "type": "register",
+  "device_id": "a1b2c3d4e5f67890",
+  "circle_id": "circle_uuid",
+  "public_key": "hex-encoded Ed25519 public key",
+  "timestamp": "1710000000",
+  "signature": "hex-encoded Ed25519 signature"
+}
+```
+
+**Verification steps:**
+1. Derive `device_id` from `SHA-256(public_key)[:8]` and verify match
+2. Validate Ed25519 signature over `device_id|circle_id|timestamp`
+3. Check timestamp freshness (within 30 seconds)
+4. Reject replayed signatures (nonce cache with 60s TTL)
+
+## Rate Limiting
+
+Per-connection token bucket:
+
+| Traffic | Sustained | Burst | Excess |
+|---------|-----------|-------|--------|
+| Signaling | 10 msg/s | 20 burst | Error returned |
+| Audio | 100 frames/s | 150 burst | Silently dropped |
+
 ## Wire Protocol
 
 All communication happens over a single WebSocket connection at `GET /ws`.
@@ -23,7 +73,7 @@ All communication happens over a single WebSocket connection at `GET /ws`.
 
 | Direction | Type | Fields | Description |
 |-----------|------|--------|-------------|
-| C → R | `register` | `device_id`, `circle_id` | Register identity for this connection |
+| C → R | `register` | `device_id`, `circle_id`, `public_key`, `timestamp`, `signature` | Register with Ed25519 auth |
 | C → R | `call_offer` | `call_id`, `target_device_id`, `sdp` | Initiate call to peer |
 | R → C | `call_offer` | `call_id`, `caller_device_id`, `sdp` | Forward offer to callee |
 | R → C | `call_ringing` | `call_id` | Offer was delivered |
@@ -31,7 +81,6 @@ All communication happens over a single WebSocket connection at `GET /ws`.
 | R → C | `call_answer` | `call_id`, `sdp` | Forward answer to caller |
 | C → R | `call_end` | `call_id`, `reason` | End a call |
 | R → C | `call_end` | `call_id`, `reason` | Notify peer of call end |
-| C → R | `ice_candidate` | `call_id`, `candidate` | ICE candidate (future) |
 | R → C | `error` | `message` | Error response |
 
 ### Binary Audio Frames (binary WebSocket frames)
@@ -43,12 +92,13 @@ All communication happens over a single WebSocket connection at `GET /ws`.
 ```
 
 - First 36 bytes: call_id as UUID string (used for routing)
-- Remaining bytes: AES-256-GCM encrypted audio (opaque to relay)
+- Remaining bytes: AES-256-GCM encrypted Opus audio (opaque to relay)
 - Maximum frame size: 64 KB
+- Audio codec: Opus at 32kbps (~80-160 bytes/frame), with µ-law G.711 fallback
 
 ## Call Lifecycle
 
-1. Both clients connect to `/ws` and send `register` with `device_id` and `circle_id`
+1. Both clients connect to `/ws` and send `register` with Ed25519-signed identity
 2. Caller sends `call_offer` → relay forwards to callee, sends `call_ringing` to caller
 3. Callee sends `call_answer` → relay forwards to caller, session becomes active
 4. Both sides exchange binary audio frames → relay forwards to peer
@@ -81,7 +131,7 @@ GET /health → {"status":"ok","version":"0.1.0"}
 # Build
 CGO_ENABLED=0 go build -o veu-voice-relay .
 
-# Test
+# Test (35 tests, race detector enabled)
 CGO_ENABLED=0 go test ./... -race
 
 # Run
@@ -93,6 +143,7 @@ CGO_ENABLED=0 go test ./... -race
 Deployed on Fly.io:
 
 ```bash
+fly apps create veu-voice-relay
 fly deploy
 ```
 
