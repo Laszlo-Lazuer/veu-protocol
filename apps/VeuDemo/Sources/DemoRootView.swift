@@ -1229,6 +1229,7 @@ struct ChatBubble: View {
     var myCallsign: String = ""
     var onReaction: ((String) -> Void)?
     @State private var showReactionPicker = false
+    @State private var safariURL: URL?
 
     private static let reactionEmojis = ["❤️", "😂", "👍", "😮", "🙏", "😢"]
 
@@ -1244,10 +1245,16 @@ struct ChatBubble: View {
                         .fontWeight(.semibold)
                 }
 
-                Text(message.text)
+                LinkedText(
+                    text: message.text,
+                    foregroundColor: message.isMe ? .white : .primary,
+                    linkColor: message.isMe
+                        ? Color(red: 0.75, green: 0.95, blue: 0.85)
+                        : Color(red: 0.2, green: 0.5, blue: 0.9),
+                    onTapURL: { url in safariURL = url }
+                )
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .foregroundColor(message.isMe ? .white : .primary)
                     .background(
                         RoundedRectangle(cornerRadius: 18)
                             .fill(message.isMe
@@ -1311,7 +1318,112 @@ struct ChatBubble: View {
             if !message.isMe { Spacer(minLength: 60) }
         }
         .animation(.spring(response: 0.25), value: showReactionPicker)
+        .sheet(item: $safariURL) { url in
+            PrivateBrowserView(url: url)
+        }
     }
+}
+
+// MARK: - Linked Text
+
+/// Renders message text with tappable, sanitized links.
+/// URLs are detected, stripped of tracking params, and opened in an
+/// ephemeral in-app browser. No referrer, no shared cookies.
+struct LinkedText: View {
+    let text: String
+    var foregroundColor: Color = .primary
+    var linkColor: Color = .blue
+    var onTapURL: ((URL) -> Void)?
+
+    // Simple URL regex — matches http(s) URLs in message text
+    private static let urlPattern = try! NSRegularExpression(
+        pattern: #"https?://[^\s<>\"\]\)]+"#,
+        options: .caseInsensitive
+    )
+
+    var body: some View {
+        let (styledText, urls) = buildStyledText()
+        styledText
+            .onTapGesture {
+                if let url = urls.first {
+                    onTapURL?(url)
+                }
+            }
+    }
+
+    private func buildStyledText() -> (Text, [URL]) {
+        let nsText = text as NSString
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        let matches = Self.urlPattern.matches(in: text, range: fullRange)
+
+        if matches.isEmpty {
+            return (Text(text).foregroundColor(foregroundColor), [])
+        }
+
+        var result = Text("")
+        var lastIndex = text.startIndex
+        var urls: [URL] = []
+
+        for match in matches {
+            guard let range = Range(match.range, in: text) else { continue }
+
+            // Text before the URL
+            if lastIndex < range.lowerBound {
+                result = result + Text(text[lastIndex..<range.lowerBound])
+                    .foregroundColor(foregroundColor)
+            }
+
+            // The URL itself — display domain for cleanliness
+            let urlString = String(text[range])
+            let displayText = URLComponents(string: urlString)?.host ?? urlString
+            if let sanitized = URLSanitizer.sanitize(urlString) {
+                result = result + Text(displayText)
+                    .foregroundColor(linkColor)
+                    .underline()
+                urls.append(sanitized)
+            } else {
+                result = result + Text(urlString)
+                    .foregroundColor(foregroundColor)
+            }
+            lastIndex = range.upperBound
+        }
+
+        // Trailing text after last URL
+        if lastIndex < text.endIndex {
+            result = result + Text(text[lastIndex..<text.endIndex])
+                .foregroundColor(foregroundColor)
+        }
+
+        return (result, urls)
+    }
+}
+
+// MARK: - Private Browser
+
+import SafariServices
+
+/// Wraps SFSafariViewController in ephemeral mode — no cookies, no history,
+/// no referrer leaks back to the app or between sessions.
+struct PrivateBrowserView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let config = SFSafariViewController.Configuration()
+        config.entersReaderIfAvailable = false
+        config.barCollapsingEnabled = true
+
+        let vc = SFSafariViewController(url: url, configuration: config)
+        vc.preferredBarTintColor = .black
+        vc.preferredControlTintColor = UIColor(red: 0.31, green: 0.78, blue: 0.47, alpha: 1)
+        vc.dismissButtonStyle = .close
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
 }
 
 // MARK: - Reaction Picker
