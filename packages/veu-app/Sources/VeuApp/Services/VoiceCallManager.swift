@@ -34,6 +34,10 @@ public final class VoiceCallManager: ObservableObject {
     public var circleKey: Data?
     public var deviceID: String = ""
     public var callsign: String = ""
+    public var circleID: String = ""
+
+    /// Ed25519 signing key for relay authentication (set from AppState.identity).
+    public var signingKey: Curve25519.Signing.PrivateKey?
 
     /// Send a voice signal to a peer via the Ghost Network (TCP).
     public var sendSignal: ((GhostMessage.VoiceCallPayload) -> Void)?
@@ -47,10 +51,18 @@ public final class VoiceCallManager: ObservableObject {
     private var udpSocket: VoiceUDPSocket?
     private var peerUDPConnected = false
     public let callKitManager = CallKitManager()
+    /// Voice relay WebSocket transport — fallback when direct UDP isn't available.
+    private var relayTransport: VoiceRelayTransport?
     /// Whether we initiated this call (affects CallKit API usage).
     private var isOutgoingCall = false
     /// Whether CallKit successfully reported this call.
     private var callKitActive = false
+    /// Whether the relay transport is actively handling audio for this call.
+    private var usingRelay = false
+    /// Timer that fires after UDP grace period to fall back to relay.
+    private var udpFallbackTimer: Timer?
+    /// How long to wait for UDP to connect before falling back to relay.
+    private static let udpGracePeriod: TimeInterval = 3.0
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
@@ -105,6 +117,63 @@ public final class VoiceCallManager: ObservableObject {
             print("[VoiceCall] 🔇 CallKit audio session deactivated")
         }
     }
+
+    /// Connect to the voice relay server as a fallback audio transport.
+    /// Only called when direct UDP audio fails to connect (peers not on same LAN).
+    private func setupRelayTransport() {
+        guard relayTransport == nil else { return } // Already set up
+        guard let key = circleKey, let signingKey = signingKey else {
+            print("[VoiceCall] ⚠️ No circle key or signing key — relay audio unavailable")
+            return
+        }
+        let transport = VoiceRelayTransport(circleKey: key)
+        transport.connect(deviceID: deviceID, circleID: circleID, signingKey: signingKey)
+
+        // Only wire audio callback — signaling stays on GhostMessage
+        transport.onAudioFrame = { [weak self] frameData in
+            self?.handleReceivedAudioFrame(frameData)
+        }
+        transport.onError = { message in
+            print("[VoiceCall] ⚠️ Relay error: \(message)")
+        }
+
+        self.relayTransport = transport
+        self.usingRelay = true
+        print("[VoiceCall] 📡 Voice relay connected (UDP fallback)")
+    }
+
+    /// Start a timer that falls back to relay if UDP doesn't connect in time.
+    private func startUDPFallbackTimer(callID: String) {
+        udpFallbackTimer?.invalidate()
+        udpFallbackTimer = Timer.scheduledTimer(withTimeInterval: Self.udpGracePeriod, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            if !self.peerUDPConnected {
+                print("[VoiceCall] ⏰ UDP didn't connect in \(Self.udpGracePeriod)s — falling back to relay")
+                self.setupRelayTransport()
+                // Register the call on the relay so audio frames get routed
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+    }
+
+    /// The active call ID (extracted from state for relay transport).
+    private var activeCallID: String? {
+        switch state {
+        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+            return id
+        default:
+            return nil
+        }
+    }
+
+    private func teardownRelayTransport() {
+        relayTransport?.disconnect()
+        relayTransport = nil
+        usingRelay = false
+    }
     #endif
 
     // MARK: - Outgoing Call (1:1)
@@ -116,6 +185,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         isOutgoingCall = true
         callKitActive = false
+        // Always set up UDP — if peer is on same LAN, this gives lowest latency
         setupUDP()
         callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID) { [weak self] error in
             if error == nil {
@@ -125,6 +195,8 @@ public final class VoiceCallManager: ObservableObject {
         }
         #endif
 
+        // Signaling always goes through GhostMessage (uses existing transport priority:
+        // Local → Mesh → Relay). The voice relay is only for audio frame fallback.
         var payload = GhostMessage.VoiceCallPayload(
             callID: callID,
             action: .offer,
@@ -135,9 +207,10 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         payload.audioUDPPort = udpSocket?.localPort
         payload.audioAddresses = Self.localIPAddresses()
-        print("[VoiceCall] 📤 Offer UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? [])")
+        print("[VoiceCall] 📤 Offer via mesh (UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? []))")
         #endif
         sendSignal?(payload)
+
         state = .outgoingRinging(callID: callID, recipientDevice: recipientDeviceID)
         startRingTimer(callID: callID)
         return callID
@@ -474,6 +547,24 @@ public final class VoiceCallManager: ObservableObject {
         // Pre-configure audio session (category/mode) before CallKit activates it
         try? audioEngine.configureSession()
 
+        // If UDP didn't connect (peer has no direct path), start relay fallback timer.
+        // Gives UDP a grace period before falling back to the relay for audio frames.
+        if !peerUDPConnected {
+            if peerAudioAddresses.isEmpty || peerAudioUDPPort == 0 {
+                // Peer sent no UDP info at all — they're definitely remote. Use relay immediately.
+                print("[VoiceCall] 📡 No peer UDP info — using relay for audio immediately")
+                setupRelayTransport()
+                if let callID = activeCallID {
+                    relayTransport?.activeCallID = callID
+                }
+            } else {
+                // Peer sent UDP info but we haven't connected yet — give it a few seconds
+                startUDPFallbackTimer(callID: callID)
+            }
+        } else {
+            print("[VoiceCall] 🔗 UDP connected — using direct audio path")
+        }
+
         // Defer audio start until CallKit activates session (didActivate callback)
         pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
 
@@ -501,7 +592,8 @@ public final class VoiceCallManager: ObservableObject {
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
-            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), UDP: \(peerUDPConnected ? "yes" : "no, TCP fallback"))")
+            let transport = peerUDPConnected ? "UDP (direct)" : usingRelay ? "Relay (remote)" : "TCP mesh (fallback)"
+            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), transport: \(transport))")
         } catch {
             print("[VoiceCallManager] Failed to start audio: \(error)")
             endCallCleanup(reason: "Audio error")
@@ -520,9 +612,11 @@ public final class VoiceCallManager: ObservableObject {
         frame.append(compressed)
         sequenceNumber &+= 1
 
-        // Prefer UDP, fall back to TCP
+        // Transport priority: UDP (direct/local) > Relay (remote) > TCP mesh fallback
         if peerUDPConnected, let socket = udpSocket {
             socket.sendFrame(frame)
+        } else if usingRelay, let relay = relayTransport {
+            relay.sendAudioFrame(frame)
         } else {
             sendAudioFrame?(frame)
         }
@@ -579,6 +673,9 @@ public final class VoiceCallManager: ObservableObject {
         udpSocket?.stop()
         udpSocket = nil
         peerUDPConnected = false
+        udpFallbackTimer?.invalidate()
+        udpFallbackTimer = nil
+        teardownRelayTransport()
         #endif
         state = .ended(reason: reason)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
