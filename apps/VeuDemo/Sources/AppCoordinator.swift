@@ -418,6 +418,14 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
             guard let circleID = service.circleID else { return }
             print("[AppCoordinator] Invite confirmed, circleID=\(circleID.prefix(8))…")
 
+            // Register the circle and its key in AppState (persists to Keychain + Ledger)
+            if let key = service.circleKey {
+                try state.addCircle(circleID: circleID, circleKey: key)
+                try state.setActiveCircle(circleID)
+                let keyHash = key.keyData.prefix(8).map { String(format: "%02x", $0) }.joined()
+                print("[AppCoordinator] Invite circle registered, keyHash=\(keyHash)…")
+            }
+
             // Register self as circle member
             try state.ledger.insertCircleMember(
                 circleID: circleID,
