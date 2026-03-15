@@ -111,13 +111,16 @@ Clients communicate over WebSocket at `/ws?topic=<64-char-hex-topic-hash>`:
 
 ```jsonc
 // Client → Relay: push an encrypted artifact
-{"type": "artifact_push", "cid": "<cidv1>", "topic": "<hex>", "payload": "<base64>"}
+{"type": "artifact_push", "cid": "<cidv1>", "topic": "<hex>", "payload": "<base64>", "persist": true}
 
 // Client → Relay: pull artifacts since a timestamp
 {"type": "pull_request", "topic": "<hex>", "since": 1709000000}
 
 // Relay → Client: pull response
 {"type": "pull_response", "artifacts": [{"cid": "...", "payload": "...", "timestamp": 1709001000}]}
+
+// Relay → Client: sender-visible acknowledgement for artifact_push
+{"type": "artifact_ack", "cid": "<cidv1-or-relay-message-id>", "topic": "<hex>", "status": "accepted|duplicate|rejected", "message": "artifact stored"}
 
 // Client → Relay: register push token
 {"type": "register_token", "topic": "<hex>", "token": "<hex>", "device_id": "<uuid>"}
@@ -135,3 +138,15 @@ Clients communicate over WebSocket at `/ws?topic=<64-char-hex-topic-hash>`:
 - **SQLite WAL mode** is enabled for concurrent read/write performance.
 - **Artifact deduplication** is enforced via unique CID constraints — replaying the same artifact is a no-op.
 - **Message limits:** Maximum WebSocket message size is 10 MB; maximum artifact payload is 5 MB.
+- **Delivery acknowledgement:** The relay now explicitly confirms whether each `artifact_push` was accepted, rejected, or treated as a duplicate so clients can surface sender-visible delivery status.
+
+## Recommended Fly.io production settings for MVP
+
+For the current MVP footprint, prefer a single always-on machine in `dfw`:
+
+- `primary_region = "dfw"` for a better midpoint between Denver and Texas testers.
+- `auto_stop_machines = "off"` to avoid cold-start delays on websocket reconnects and timeline posting.
+- `kill_signal = "SIGTERM"` and a longer `kill_timeout` so websocket clients have a better chance to drain cleanly during deploys.
+- `idle_timeout = 600` to reduce accidental websocket idle disconnects at the proxy layer.
+- A small pinned VM (`shared-cpu-1x`, `512mb`) for predictable runtime characteristics at low monthly cost.
+- Volume snapshot retention for basic recovery if the single SQLite volume needs to be restored.

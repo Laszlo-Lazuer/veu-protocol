@@ -210,7 +210,12 @@ final class MeshNodeTests: XCTestCase {
 
     func testRelayMessageArtifactPushCodable() throws {
         let msg = RelayMessage.artifactPush(
-            RelayMessage.ArtifactPushPayload(cid: "bafktest", topic: "abcdef1234", payload: "base64data")
+            RelayMessage.ArtifactPushPayload(
+                cid: "bafktest",
+                topic: "abcdef1234",
+                payload: "base64data",
+                persist: false
+            )
         )
         let data = try JSONEncoder().encode(msg)
         let decoded = try JSONDecoder().decode(RelayMessage.self, from: data)
@@ -218,8 +223,30 @@ final class MeshNodeTests: XCTestCase {
             XCTAssertEqual(p.cid, "bafktest")
             XCTAssertEqual(p.topic, "abcdef1234")
             XCTAssertEqual(p.payload, "base64data")
+            XCTAssertEqual(p.persist, false)
         } else {
             XCTFail("Expected artifactPush")
+        }
+    }
+
+    func testRelayMessageArtifactAckCodable() throws {
+        let msg = RelayMessage.artifactAck(
+            RelayMessage.ArtifactAckPayload(
+                cid: "artifact-123",
+                topic: "abcdef1234",
+                status: .accepted,
+                message: "artifact stored"
+            )
+        )
+        let data = try JSONEncoder().encode(msg)
+        let decoded = try JSONDecoder().decode(RelayMessage.self, from: data)
+        if case .artifactAck(let payload) = decoded {
+            XCTAssertEqual(payload.cid, "artifact-123")
+            XCTAssertEqual(payload.topic, "abcdef1234")
+            XCTAssertEqual(payload.status, .accepted)
+            XCTAssertEqual(payload.message, "artifact stored")
+        } else {
+            XCTFail("Expected artifactAck")
         }
     }
 

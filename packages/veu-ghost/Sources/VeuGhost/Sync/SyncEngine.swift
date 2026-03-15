@@ -10,7 +10,7 @@ import VeuAuth
 /// Delegate for SyncEngine events.
 public protocol SyncEngineDelegate: AnyObject {
     /// Called when an artifact has been received and stored in the Ledger.
-    func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String)
+    func syncEngine(_ engine: SyncEngine, didReceiveArtifact cid: String, circleID: String, via transport: String)
 
     /// Called when a burn notice has been processed.
     func syncEngine(_ engine: SyncEngine, didProcessBurn cid: String, circleID: String)
@@ -251,7 +251,7 @@ public final class SyncEngine {
                     }
 
                 case .artifactPush(let artifact):
-                    self.storeReceivedArtifact(artifact)
+                    self.storeReceivedArtifact(artifact, via: connection.transportName)
                     let newRemaining = (remaining ?? 1) - 1
                     if newRemaining > 0 {
                         self.receiveArtifacts(circleID: circleID, connection: connection, remaining: newRemaining)
@@ -273,12 +273,12 @@ public final class SyncEngine {
     }
 
     /// Store a received artifact (called from GhostNode for direct push handling).
-    public func storeReceivedArtifactPublic(_ artifact: GhostMessage.ArtifactPushPayload) {
-        storeReceivedArtifact(artifact)
+    public func storeReceivedArtifactPublic(_ artifact: GhostMessage.ArtifactPushPayload, via transport: String) {
+        storeReceivedArtifact(artifact, via: transport)
     }
 
-    private func storeReceivedArtifact(_ artifact: GhostMessage.ArtifactPushPayload) {
-        print("[SyncEngine] Storing artifact \(String(artifact.cid.prefix(8)))… for circle \(String(artifact.circleID.prefix(8)))…")
+    private func storeReceivedArtifact(_ artifact: GhostMessage.ArtifactPushPayload, via transport: String) {
+        print("[SyncEngine] Storing artifact \(String(artifact.cid.prefix(8)))… for circle \(String(artifact.circleID.prefix(8)))… via \(transport)")
         let targetRecipientsJSON: String? = artifact.targetRecipients.flatMap { recipients in
             guard !recipients.isEmpty else { return nil }
             return try? String(data: JSONEncoder().encode(recipients), encoding: .utf8)
@@ -291,11 +291,12 @@ public final class SyncEngine {
                 encryptedMeta: artifact.encryptedMeta,
                 senderID: artifact.originDeviceID,
                 targetRecipients: targetRecipientsJSON,
-                burnAfter: artifact.burnAfter
+                burnAfter: artifact.burnAfter,
+                receivedVia: transport
             )
             try ledger.markSynced(cid: artifact.cid)
-            print("[SyncEngine] ✅ Stored artifact \(String(artifact.cid.prefix(8)))…")
-            delegate?.syncEngine(self, didReceiveArtifact: artifact.cid, circleID: artifact.circleID)
+            print("[SyncEngine] ✅ Stored artifact \(String(artifact.cid.prefix(8)))… via \(transport)")
+            delegate?.syncEngine(self, didReceiveArtifact: artifact.cid, circleID: artifact.circleID, via: transport)
         } catch let error as VeuAuthError {
             // Duplicate artifact — skip silently (UNIQUE constraint or step-result mismatch)
             if case .ledgerError(let msg) = error,

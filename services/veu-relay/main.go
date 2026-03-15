@@ -61,6 +61,7 @@ func main() {
 	// Initialize WebSocket hub.
 	hub := ws.NewHub(st, pusher)
 	go hub.Run(ctx)
+	hub.StartPruner(ctx, 5*time.Minute)
 
 	// Set up HTTP routes.
 	mux := api.NewRouter(hub)

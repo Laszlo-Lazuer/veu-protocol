@@ -83,6 +83,27 @@ public final class AppState {
                state.circleKeys[savedActiveID] != nil {
                 state.activeCircleID = savedActiveID
             }
+            
+            // Auto-recover circles from Keychain when Ledger is empty (e.g. app reinstall).
+            // Keychain persists across delete/reinstall; the Ledger DB may be recreated fresh.
+            let ledgerCircles = (try? ledger.listCircles()) ?? []
+            for circleID in state.circleKeys.keys where !ledgerCircles.contains(circleID) {
+                let placeholder = Data(circleID.utf8)
+                try? ledger.insertCircle(circleID: circleID, encryptedName: placeholder)
+                try? ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: identity.deviceID,
+                    publicKeyHex: identity.publicKeyHex,
+                    callsign: identity.callsign
+                )
+            }
+            
+            // If no active circle but Keychain has keys, activate the first one
+            if state.activeCircleID == nil, let firstID = state.circleKeys.keys.first {
+                state.activeCircleID = firstID
+            }
+            
+            state.circleIDs = (try? ledger.listCircles()) ?? []
         }
         
         return state

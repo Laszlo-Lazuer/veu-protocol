@@ -1,5 +1,7 @@
 app = "veu-relay"
-primary_region = "iad"
+primary_region = "dfw"
+kill_signal = "SIGTERM"
+kill_timeout = 30
 
 [build]
 
@@ -10,19 +12,27 @@ primary_region = "iad"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "suspend"
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  [http_service.http_options]
+    idle_timeout = 600
 
-[mounts]
+[[mounts]]
   source = "veu_data"
   destination = "/data"
+  snapshot_retention = 14
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
+  cpu_kind = "shared"
 
 [checks]
   [checks.health]
     port = 8080
     type = "http"
-    interval = "30s"
+    interval = "15s"
     timeout = "5s"
     grace_period = "10s"
     method = "GET"

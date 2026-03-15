@@ -658,12 +658,8 @@ struct ConversationChatView: View {
                     .padding(.vertical, 8)
                     .background(Color(.systemGray6))
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .toolbar {
-                        ToolbarItemGroup(placement: .keyboard) {
-                            Spacer()
-                            Button("Done") { isInputFocused.wrappedValue = false }
-                        }
-                    }
+                    .submitLabel(.done)
+                    .onSubmit { isInputFocused.wrappedValue = false }
 
                 Button {
                     let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1330,9 +1326,19 @@ struct DemoTimelineTab: View {
                     Spacer()
                 }
                 Spacer()
-                // Timestamp — bottom right
-                HStack {
+                // Transport badge + timestamp — bottom right
+                HStack(spacing: 6) {
                     Spacer()
+                    if let transport = entry.receivedVia {
+                        Text(transportBadge(transport))
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.ultraThinMaterial.opacity(0.7))
+                            .clipShape(Capsule())
+                    }
                     if let date = entry.createdAt {
                         Text(date, style: .relative)
                             .font(.caption2)
@@ -1396,6 +1402,16 @@ struct DemoTimelineTab: View {
         .clipShape(RoundedRectangle(cornerRadius: 20))
     }
     
+    /// Map transport name to a display badge.
+    private func transportBadge(_ transport: String) -> String {
+        switch transport {
+        case "Local":  return "📶 Local"
+        case "Mesh":   return "🔗 Mesh"
+        case "Global": return "📡 Relay"
+        default:       return "❓ \(transport)"
+        }
+    }
+
     /// Derive a deterministic but obfuscated seed color for FOMO skeleton
     private func fomoSeedColor(for cid: String) -> SIMD3<Float> {
         let hash = cid.data(using: .utf8)!.withUnsafeBytes { bytes in
@@ -1563,6 +1579,7 @@ struct CaptureSheet: View {
     @ObservedObject var coordinator: AppCoordinator
     @Binding var isPresented: Bool
     @State private var capturedData: Data?
+    @State private var capturedImage: UIImage?
     @State private var messageText = ""
     @State private var useCamera = false
     @State private var sealed = false
@@ -1570,13 +1587,23 @@ struct CaptureSheet: View {
     @State private var selectedRecipients: Set<String> = []  // Device IDs
     @State private var showRecipientPicker = false
 
+    // Async compression state — keeps heavy work off the main thread.
+    @State private var isCompressing = false
+    @State private var compressedData: Data?
+    @State private var compressedSize: Int?
+    @State private var compressionError: String?
+    @State private var compressionTask: Task<Void, Never>?
+
     var body: some View {
         NavigationStack {
+            ScrollView {
             VStack(spacing: 20) {
                 if useCamera {
                     CameraCaptureView { imageData in
                         capturedData = imageData
+                        capturedImage = UIImage(data: imageData)
                         useCamera = false
+                        triggerCompression()
                     }
                     .frame(height: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -1611,11 +1638,71 @@ struct CaptureSheet: View {
                         .cornerRadius(12)
                     }
 
-                    if let raw = capturedData {
-                        let compressed = compressForSending(raw)
-                        Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(compressed.count))",
-                              systemImage: "checkmark.circle.fill")
-                            .foregroundColor(.green)
+                    // Photo preview + compression status
+                    if let preview = capturedImage {
+                        ZStack {
+                            Image(uiImage: preview)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 200)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                            if isCompressing {
+                                Color.black.opacity(0.5)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                        .tint(.white)
+                                    Text("Optimizing for relay…")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                }
+                            }
+
+                            // Retake button
+                            VStack {
+                                HStack {
+                                    Spacer()
+                                    Button {
+                                        capturedData = nil
+                                        capturedImage = nil
+                                        compressedData = nil
+                                        compressedSize = nil
+                                        compressionError = nil
+                                        useCamera = true
+                                    } label: {
+                                        Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                            .font(.caption)
+                                            .padding(8)
+                                            .background(.ultraThinMaterial)
+                                            .clipShape(Circle())
+                                    }
+                                    .padding(8)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .frame(height: 200)
+
+                        // Size info (uses cached result, never recompresses)
+                        if let raw = capturedData {
+                            if let size = compressedSize {
+                                Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(size))",
+                                      systemImage: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                            } else if let err = compressionError {
+                                Label(err, systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                    .font(.caption)
+                            } else if !isCompressing {
+                                Label("Photo: \(formatBytes(raw.count))",
+                                      systemImage: "photo.fill")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+                        }
                     }
 
                     TextField("Enter message…", text: $messageText, axis: .vertical)
@@ -1641,18 +1728,19 @@ struct CaptureSheet: View {
                         Button {
                             sealContent()
                         } label: {
-                            Label("Seal", systemImage: "lock.shield")
+                            Label(isCompressing ? "Processing…" : "Seal", systemImage: "lock.shield")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
-                        .disabled(capturedData == nil && messageText.isEmpty)
+                        .disabled((capturedData == nil && messageText.isEmpty) || isCompressing)
                     }
                 }
 
-                Spacer()
             }
             .padding()
+            }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Compose")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1661,6 +1749,40 @@ struct CaptureSheet: View {
             }
             .sheet(isPresented: $showRecipientPicker) {
                 recipientPickerSheet
+            }
+        }
+    }
+
+    /// Kick off compression on a background thread. Only recompresses
+    /// when the raw image data changes — typing a caption won't retrigger.
+    private func triggerCompression() {
+        compressionTask?.cancel()
+        guard let raw = capturedData else { return }
+
+        isCompressing = true
+        compressedData = nil
+        compressedSize = nil
+        compressionError = nil
+
+        compressionTask = Task.detached(priority: .userInitiated) {
+            do {
+                let caption = ""  // Preview uses empty caption; seal uses actual caption.
+                let burnAfter = Int(Date().timeIntervalSince1970) + Int(24 * 3600)
+                let compressed = try await MainActor.run {
+                    try compressForSending(raw, caption: caption, burnAfter: burnAfter, targetRecipients: nil)
+                }
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    compressedData = compressed
+                    compressedSize = compressed.count
+                    isCompressing = false
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    compressionError = error.localizedDescription
+                    isCompressing = false
+                }
             }
         }
     }
@@ -1773,10 +1895,79 @@ struct CaptureSheet: View {
         }
     }
     
-    /// Compress image to ≤1080px longest edge at 70% JPEG quality.
-    private func compressForSending(_ rawData: Data) -> Data {
+    /// Compress image for a final encoded relay package budget of 2 MB.
+    private func compressForSending(
+        _ rawData: Data,
+        caption: String,
+        burnAfter: Int?,
+        targetRecipients: [String]?
+    ) throws -> Data {
         guard let image = UIImage(data: rawData) else { return rawData }
-        let maxDimension: CGFloat = 1080
+        guard let state = coordinator.appState,
+              let circleID = state.activeCircleID else {
+            throw NSError(
+                domain: "DemoTimelineTab",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No active circle selected"]
+            )
+        }
+
+        let circleKey = try state.activeCircleKey()
+        let captionValue = caption.isEmpty ? nil : caption
+        let qualityCandidates: [CGFloat] = [0.72, 0.64, 0.56, 0.48, 0.40, 0.32, 0.26, 0.22, 0.18, 0.14, 0.10]
+        let sizeCandidates = dimensionCandidates(for: image)
+
+        var bestCandidate: (data: Data, packageSize: Int)?
+
+        for maxDimension in sizeCandidates {
+            let preparedImage = processedImageForSending(image, maxDimension: maxDimension)
+
+            for quality in qualityCandidates {
+                guard let jpegData = preparedImage.jpegData(compressionQuality: quality) else { continue }
+                let candidate = stripMetadata(from: jpegData) ?? jpegData
+                let postData = try encodePostPayload(imageData: candidate, caption: captionValue)
+                let packageSize = try RelayPostBudget.encodedPackageSize(
+                    forPostData: postData,
+                    circleID: circleID,
+                    circleKey: circleKey,
+                    senderDeviceID: state.identity.deviceID,
+                    burnAfter: burnAfter,
+                    targetRecipients: targetRecipients
+                )
+
+                if bestCandidate == nil || packageSize < bestCandidate!.packageSize {
+                    bestCandidate = (candidate, packageSize)
+                }
+
+                if packageSize <= RelayPostBudget.targetEncodedPackageBytes {
+                    return candidate
+                }
+            }
+        }
+
+        // Always return the best candidate — local/mesh have no size limit and
+        // the relay hard limit (5 MB payload) is well above the 2 MB target.
+        if let best = bestCandidate {
+            print("[Compress] Best candidate \(formatBytes(best.packageSize)) exceeds 2 MB relay target; using anyway")
+            return best.data
+        }
+
+        return rawData
+    }
+
+    private func dimensionCandidates(for image: UIImage) -> [CGFloat] {
+        let originalLongestEdge = max(image.size.width, image.size.height)
+        let candidates: [CGFloat] = [1080, 960, 840, 720, 600, 540, 480]
+        return candidates.filter { $0 < originalLongestEdge } + [min(originalLongestEdge, 1080)]
+            .reduce(into: [CGFloat]()) { result, value in
+                if !result.contains(value) {
+                    result.append(value)
+                }
+            }
+            .sorted(by: >)
+    }
+
+    private func processedImageForSending(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
         let size = image.size
         let scale: CGFloat
         if max(size.width, size.height) > maxDimension {
@@ -1784,17 +1975,17 @@ struct CaptureSheet: View {
         } else {
             scale = 1.0
         }
+
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
 
-        // Anti-PRNU: random micro-crop (1-4px per edge) to break spatial alignment
         let cropped = randomMicroCrop(resized)
-        // Anti-PRNU: inject subtle Gaussian noise to destroy sensor fingerprint
-        let noised = injectSensorNoise(cropped)
+        return injectSensorNoise(cropped)
+    }
 
-        guard let jpegData = noised.jpegData(compressionQuality: 0.7) else { return rawData }
-        return stripMetadata(from: jpegData) ?? jpegData
+    private func encodePostPayload(imageData: Data, caption: String?) throws -> Data {
+        try JSONEncoder().encode(PostPayload(imageData: imageData, caption: caption))
     }
 
     /// Crop 1-4 random pixels from each edge to break PRNU spatial alignment.
@@ -1871,24 +2062,39 @@ struct CaptureSheet: View {
 
     private func sealContent() {
         let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let data: Data
-        if let imageData = capturedData {
-            let compressed = compressForSending(imageData)
-            let payload = PostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
-            guard let encoded = try? JSONEncoder().encode(payload) else { return }
-            data = encoded
-        } else {
-            data = Data(caption.utf8)
-        }
-        guard !data.isEmpty else { return }
         let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
         
         // Convert selected recipients to array (nil = everyone)
         let targets: [String]? = selectedRecipients.isEmpty ? nil : Array(selectedRecipients)
-        
-        coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
-        HapticEngine.handshakeHeartbeat()
-        sealed = true
+
+        do {
+            let data: Data
+            if let imageData = capturedData {
+                // Use pre-compressed data when available; fall back to on-demand compression.
+                let compressed: Data
+                if let cached = compressedData {
+                    compressed = cached
+                } else {
+                    compressed = try compressForSending(
+                        imageData,
+                        caption: caption,
+                        burnAfter: burnEpoch,
+                        targetRecipients: targets
+                    )
+                }
+                data = try encodePostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
+            } else {
+                data = Data(caption.utf8)
+            }
+
+            guard !data.isEmpty else { return }
+
+            coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+            HapticEngine.handshakeHeartbeat()
+            sealed = true
+        } catch {
+            coordinator.sealError = error.localizedDescription
+        }
     }
 }
 
@@ -1939,10 +2145,13 @@ struct NetworkTab: View {
                 } else {
                     // Relay URL configuration
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Relay Server (optional)")
+                        Text("Relay Server")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        TextField("wss://relay.example.com", text: $coordinator.relayURL)
+                        Text("Leave blank to use the default relay: \(RelayDefaults.defaultRelayURLString)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        TextField("Default: \(RelayDefaults.defaultRelayURLString)", text: $coordinator.relayURL)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
                             .autocapitalization(.none)

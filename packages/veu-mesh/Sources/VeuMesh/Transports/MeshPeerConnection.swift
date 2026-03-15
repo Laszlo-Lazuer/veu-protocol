@@ -17,6 +17,8 @@ public final class MeshPeerConnection: TransportConnection, @unchecked Sendable 
         peerID.displayName
     }
 
+    public var transportName: String = "Mesh"
+
     private let session: MCSession
     private let peerID: MCPeerID
     private let circleKey: Data
