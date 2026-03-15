@@ -71,6 +71,8 @@ struct DemoRootView: View {
 
 struct IdentityTab: View {
     let appState: AppState
+    @State private var circleToDelete: String?
+    @State private var showDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -114,6 +116,25 @@ struct IdentityTab: View {
                                         .foregroundColor(.green)
                                 }
                             }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                try? appState.setActiveCircle(id)
+                            }
+                            .contextMenu {
+                                if appState.activeCircleID != id {
+                                    Button {
+                                        try? appState.setActiveCircle(id)
+                                    } label: {
+                                        Label("Set Active", systemImage: "checkmark.circle")
+                                    }
+                                }
+                                Button(role: .destructive) {
+                                    circleToDelete = id
+                                    showDeleteConfirm = true
+                                } label: {
+                                    Label("Delete Circle", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                     .padding()
@@ -125,6 +146,19 @@ struct IdentityTab: View {
             }
             .padding()
             .navigationTitle("Identity")
+            .alert("Delete Circle?", isPresented: $showDeleteConfirm) {
+                Button("Cancel", role: .cancel) {
+                    circleToDelete = nil
+                }
+                Button("Delete", role: .destructive) {
+                    if let id = circleToDelete {
+                        try? appState.removeCircle(id)
+                    }
+                    circleToDelete = nil
+                }
+            } message: {
+                Text("This will permanently delete the circle, all its messages, and the shared encryption key. This cannot be undone.")
+            }
         }
     }
 }
