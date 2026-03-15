@@ -244,6 +244,9 @@ public final class VoiceCallManager: ObservableObject {
         isOutgoingCall = true
         callKitActive = false
         audioSessionActivated = false
+        // Configure audio session BEFORE CallKit gets involved — avoids
+        // disrupting the session once CallKit activates it.
+        try? audioEngine.configureSession()
         // Always set up UDP — if peer is on same LAN, this gives lowest latency
         setupUDP()
         callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID) { [weak self] error in
@@ -345,6 +348,9 @@ public final class VoiceCallManager: ObservableObject {
         cancelRingTimer()
 
         #if os(iOS)
+        // Configure audio session BEFORE CallKit activates it — avoids disrupting
+        // the session once didActivate fires.
+        try? audioEngine.configureSession()
         setupUDP()
         connectUDPToPeer()
         #endif
@@ -607,9 +613,6 @@ public final class VoiceCallManager: ObservableObject {
         if isOutgoingCall {
             callKitManager.reportOutgoingCallConnected(callID: callID)
         }
-
-        // Pre-configure audio session (category/mode) before CallKit activates it
-        try? audioEngine.configureSession()
 
         // If UDP didn't connect (peer has no direct path), start relay fallback timer.
         // Gives UDP a grace period before falling back to the relay for audio frames.
