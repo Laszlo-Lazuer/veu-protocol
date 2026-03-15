@@ -43,6 +43,7 @@ public final class VoiceCallManager: ObservableObject {
     #if os(iOS)
     private let audioEngine = AudioEngine()
     private let codec = AudioCodec()
+    private let jitterBuffer = JitterBuffer(maxDelay: 5)
     private var udpSocket: VoiceUDPSocket?
     private var peerUDPConnected = false
     public let callKitManager = CallKitManager()
@@ -388,10 +389,18 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         guard frameData.count >= 3 else { return }
 
-        // Parse: [2-byte seq][compressed audio] — skip seq (TCP delivers in order)
+        // Parse: [2-byte big-endian seq][compressed audio]
+        let seq = frameData.withUnsafeBytes { ptr -> UInt16 in
+            ptr.load(as: UInt16.self).bigEndian
+        }
         let compressedAudio = frameData.subdata(in: 2..<frameData.count)
-        let pcmData = codec.decode(compressedAudio)
-        audioEngine.playBuffer(pcmData)
+
+        // Insert into jitter buffer and drain in-order frames
+        jitterBuffer.insert(sequence: seq, data: compressedAudio)
+        while let ordered = jitterBuffer.pull() {
+            let pcmData = codec.decode(ordered)
+            audioEngine.playBuffer(pcmData)
+        }
         #endif
     }
 
@@ -462,6 +471,9 @@ public final class VoiceCallManager: ObservableObject {
             callKitManager.reportOutgoingCallConnected(callID: callID)
         }
 
+        // Pre-configure audio session (category/mode) before CallKit activates it
+        try? audioEngine.configureSession()
+
         // Defer audio start until CallKit activates session (didActivate callback)
         pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
 
@@ -481,12 +493,15 @@ public final class VoiceCallManager: ObservableObject {
     private func startAudioPipeline() {
         #if os(iOS)
         sequenceNumber = 0
+        jitterBuffer.reset()
         do {
-            try audioEngine.start()
+            // CallKit already activated the session for 1:1 calls.
+            // For room calls (no CallKit), we activate ourselves.
+            try audioEngine.start(activateSession: !callKitActive)
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
-            print("[VoiceCall] 🎙️ Audio pipeline started (UDP: \(peerUDPConnected ? "yes" : "no, TCP fallback"))")
+            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), UDP: \(peerUDPConnected ? "yes" : "no, TCP fallback"))")
         } catch {
             print("[VoiceCallManager] Failed to start audio: \(error)")
             endCallCleanup(reason: "Audio error")
@@ -560,6 +575,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         audioEngine.stop()
         audioEngine.onCapturedBuffer = nil
+        jitterBuffer.reset()
         udpSocket?.stop()
         udpSocket = nil
         peerUDPConnected = false

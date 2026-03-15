@@ -32,24 +32,28 @@ public final class AudioEngine {
     public init() {}
 
     /// Configure the audio session for voice chat.
-    /// When CallKit manages the call, it activates the session for us —
-    /// we just set category/mode/options.
+    /// Sets category/mode/options but does NOT activate — CallKit's
+    /// didActivate callback handles activation for 1:1 calls.
     public func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setPreferredSampleRate(Self.sampleRate)
         try session.setPreferredIOBufferDuration(Self.frameDuration)
-        // Don't call setActive(true) — CallKit does this via didActivate.
-        // If we're not using CallKit (e.g. room calls), activate ourselves.
-        if !session.isOtherAudioPlaying {
-            try session.setActive(true)
-        }
+    }
+
+    /// Activate the audio session explicitly (for non-CallKit scenarios like rooms).
+    public func activateSession() throws {
+        try AVAudioSession.sharedInstance().setActive(true)
     }
 
     /// Start capturing microphone audio and preparing for playback.
-    public func start() throws {
+    /// Call configureSession() before this, or let CallKit activate the session.
+    public func start(activateSession: Bool = false) throws {
         guard !isRunning else { return }
         try configureSession()
+        if activateSession {
+            try self.activateSession()
+        }
 
         let engine = AVAudioEngine()
         let playerNode = AVAudioPlayerNode()
