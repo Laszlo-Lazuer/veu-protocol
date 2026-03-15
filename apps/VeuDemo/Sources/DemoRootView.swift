@@ -2118,7 +2118,7 @@ struct CaptureSheet: View {
                     recipientSelector
 
                     VStack(alignment: .leading) {
-                        Text("Burn Timer: \(Int(burnHours))h")
+                        Text("Burn Timer: \(formatBurnTimer(burnHours))")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         Slider(value: $burnHours, in: 1...168, step: 1)
@@ -2436,6 +2436,18 @@ struct CaptureSheet: View {
             return String(format: "%.0f KB", Double(bytes) / 1024)
         }
         return "\(bytes) B"
+    }
+
+    private func formatBurnTimer(_ hours: Double) -> String {
+        let h = Int(hours)
+        if h < 24 {
+            return "\(h)h"
+        }
+        let days = hours / 24.0
+        if days == days.rounded() {
+            return "\(Int(days))d"
+        }
+        return String(format: "%.1fd", days)
     }
 
     private func sealContent() {
