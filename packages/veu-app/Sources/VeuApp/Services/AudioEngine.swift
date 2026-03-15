@@ -1,7 +1,7 @@
 // AudioEngine.swift — Veu Protocol: Real-time audio capture and playback
 //
 // Uses AVAudioEngine for mic input and speaker output.
-// Captures via AVAudioSinkNode (compatible with voice processing).
+// Captures via installTap on a mixer node after voice processing.
 // Produces 20ms PCM buffers for encoding and accepts decoded PCM for playback.
 
 #if os(iOS)
@@ -12,7 +12,7 @@ import Foundation
 public final class AudioEngine {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
-    private var sinkNode: AVAudioSinkNode?
+    private var captureMixer: AVAudioMixerNode?
     private var isRunning = false
 
     /// Called with each captured PCM buffer (mono Int16, 48kHz).
@@ -24,12 +24,10 @@ public final class AudioEngine {
     public static let frameDuration: TimeInterval = 0.020  // 20ms
     public static let framesPerBuffer: UInt32 = 960         // 48000 * 0.020
 
-    // Accumulation buffer for assembling 20ms frames from variable-size callbacks
+    // Accumulation buffer for assembling 20ms frames from variable-size tap callbacks
     private var accumulator = Data()
     private let targetBytes = Int(framesPerBuffer) * 2  // 960 samples * 2 bytes
     private var captureCount = 0
-    // Dedicated queue for processing captured audio off the realtime render thread
-    private let captureQueue = DispatchQueue(label: "veu.audio.capture", qos: .userInteractive)
 
     public init() {}
 
@@ -80,50 +78,43 @@ public final class AudioEngine {
         )!
         engine.connect(playerNode, to: engine.mainMixerNode, format: mixerFormat)
 
-        // AVAudioSinkNode captures audio directly from the render chain.
-        // This works with voice processing (unlike installTap which silently fails).
-        // CRITICAL: The render callback must be realtime-safe — no locks, allocations, or
-        // blocking calls. We copy raw bytes and dispatch processing to a background queue.
-        let sink = AVAudioSinkNode { [weak self] timestamp, frameCount, audioBufferList -> OSStatus in
-            guard let self = self else { return noErr }
-            let bufferListPtr = UnsafeBufferPointer(
-                start: audioBufferList.pointee.mBuffers.mData?.assumingMemoryBound(to: Float32.self),
-                count: Int(audioBufferList.pointee.mBuffers.mDataByteSize) / MemoryLayout<Float32>.size
-            )
-            guard let baseAddress = bufferListPtr.baseAddress else { return noErr }
+        // Use a dedicated mixer node for capture tap.
+        // installTap fails on inputNode when voice processing is enabled,
+        // but works on a downstream mixer node. The tap callback runs on a
+        // non-realtime thread, avoiding all realtime-safety issues.
+        let captureMixer = AVAudioMixerNode()
+        engine.attach(captureMixer)
+        engine.connect(inputNode, to: captureMixer, format: nil)
+        self.captureMixer = captureMixer
 
-            // Convert Float32 → Int16 inline (realtime-safe: stack alloc + memcpy)
-            let sampleCount = Int(frameCount)
+        captureMixer.installTap(onBus: 0, bufferSize: AVAudioFrameCount(Self.framesPerBuffer), format: mixerFormat) { [weak self] buffer, _ in
+            guard let self = self else { return }
+
+            // Convert Float32 → Int16
+            guard let floatData = buffer.floatChannelData?[0] else { return }
+            let sampleCount = Int(buffer.frameLength)
             var int16Bytes = Data(count: sampleCount * 2)
             int16Bytes.withUnsafeMutableBytes { rawPtr in
                 guard let int16Ptr = rawPtr.baseAddress?.assumingMemoryBound(to: Int16.self) else { return }
                 for i in 0..<sampleCount {
-                    let sample = max(-1.0, min(1.0, baseAddress[i]))
+                    let sample = max(-1.0, min(1.0, floatData[i]))
                     int16Ptr[i] = Int16(sample * 32767.0)
                 }
             }
 
-            // Dispatch accumulation + callback off the render thread
-            let captured = int16Bytes
-            self.captureQueue.async { [weak self] in
-                guard let self = self else { return }
-                self.accumulator.append(captured)
-                while self.accumulator.count >= self.targetBytes {
-                    let frame = self.accumulator.prefix(self.targetBytes)
-                    self.captureCount += 1
-                    if self.captureCount <= 3 || self.captureCount % 500 == 0 {
-                        print("[AudioEngine] 🎤 Capture #\(self.captureCount): \(frame.count) bytes")
-                    }
-                    self.onCapturedBuffer?(Data(frame))
-                    self.accumulator.removeFirst(self.targetBytes)
+            // Accumulate into 20ms frames
+            self.accumulator.append(int16Bytes)
+            while self.accumulator.count >= self.targetBytes {
+                let frame = self.accumulator.prefix(self.targetBytes)
+                self.captureCount += 1
+                if self.captureCount <= 3 || self.captureCount % 500 == 0 {
+                    print("[AudioEngine] 🎤 Capture #\(self.captureCount): \(frame.count) bytes")
                 }
+                self.onCapturedBuffer?(Data(frame))
+                self.accumulator.removeFirst(self.targetBytes)
             }
-            return noErr
         }
-        engine.attach(sink)
-        engine.connect(inputNode, to: sink, format: nil)
-        self.sinkNode = sink
-        print("[AudioEngine] SinkNode attached to inputNode")
+        print("[AudioEngine] Tap installed on capture mixer")
 
         engine.prepare()
         try engine.start()
@@ -145,15 +136,14 @@ public final class AudioEngine {
     public func stop() {
         guard isRunning else { return }
         isRunning = false
+        captureMixer?.removeTap(onBus: 0)
         playerNode?.stop()
         engine?.stop()
         engine = nil
         playerNode = nil
-        sinkNode = nil
-        captureQueue.sync {
-            accumulator.removeAll()
-            captureCount = 0
-        }
+        captureMixer = nil
+        accumulator.removeAll()
+        captureCount = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -191,13 +181,11 @@ public final class AudioEngine {
     /// Toggle mute state.
     public var isMuted: Bool = false {
         didSet {
-            // With SinkNode, mute by zeroing output in the callback
-            // For now, just disconnect/reconnect the sink
-            guard let engine = engine, let sink = sinkNode else { return }
+            guard let engine = engine, let captureMixer = captureMixer else { return }
             if isMuted {
-                engine.disconnectNodeInput(sink)
+                engine.disconnectNodeInput(captureMixer)
             } else {
-                engine.connect(engine.inputNode, to: sink, format: nil)
+                engine.connect(engine.inputNode, to: captureMixer, format: nil)
             }
         }
     }
