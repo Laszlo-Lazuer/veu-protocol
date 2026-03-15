@@ -57,14 +57,11 @@ public final class AudioEngine {
 
         let inputNode = engine.inputNode
 
-        // Enable voice processing: echo cancellation, noise suppression, AGC.
-        // This also prevents mic loopback to speaker at the hardware/DSP level.
-        do {
-            try inputNode.setVoiceProcessingEnabled(true)
-            print("[AudioEngine] ✅ Voice processing enabled")
-        } catch {
-            print("[AudioEngine] ⚠️ Voice processing failed: \(error)")
-        }
+        // .voiceChat session mode provides hardware echo cancellation, noise
+        // suppression, and AGC — we do not need setVoiceProcessingEnabled(true).
+        // Calling it reconfigures the inputNode into a duplex voice I/O unit which
+        // silently breaks installTap (the tap registers without error but never fires).
+        print("[AudioEngine] Using .voiceChat hardware echo cancellation")
 
         // Connect player → main mixer for playback
         let playbackFormat = AVAudioFormat(
