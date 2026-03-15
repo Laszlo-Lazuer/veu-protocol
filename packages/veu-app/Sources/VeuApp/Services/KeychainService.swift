@@ -80,7 +80,8 @@ public final class KeychainService {
     
     // MARK: - Circle Key Storage
     
-    /// Save a circle key to Keychain.
+    /// Save a circle key to Keychain, synced via iCloud Keychain so it survives
+    /// app deletion and transfers across the user's devices.
     public func saveCircleKey(_ circleKey: CircleKey, for circleID: String) throws {
         let data = try JSONEncoder().encode(circleKey)
         let account = circleKeyPrefix + circleID
@@ -89,21 +90,23 @@ public final class KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+            kSecAttrSynchronizable as String: true,
             kSecValueData as String: data
         ]
         
         var status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecDuplicateItem {
-            let updateQuery: [String: Any] = [
+            // Delete any existing item (may be non-sync from a previous install)
+            // then re-add as synchronizable — accessibility can't be changed via update.
+            let deleteQuery: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrAccount as String: account
+                kSecAttrAccount as String: account,
+                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
             ]
-            let updateAttrs: [String: Any] = [
-                kSecValueData as String: data
-            ]
-            status = SecItemUpdate(updateQuery as CFDictionary, updateAttrs as CFDictionary)
+            SecItemDelete(deleteQuery as CFDictionary)
+            status = SecItemAdd(query as CFDictionary, nil)
         }
         
         guard status == errSecSuccess else {
@@ -119,6 +122,7 @@ public final class KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -142,7 +146,8 @@ public final class KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
         ]
         SecItemDelete(query as CFDictionary)
     }
@@ -152,6 +157,7 @@ public final class KeychainService {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll
@@ -182,11 +188,68 @@ public final class KeychainService {
     
     /// Delete all circle keys from Keychain.
     public func deleteAllCircleKeys() {
-        // Load all to get accounts, then delete each
         let keys = loadAllCircleKeys()
         for circleID in keys.keys {
             deleteCircleKey(for: circleID)
         }
+    }
+
+    // MARK: - Active Circle Persistence
+
+    private let activeCircleAccount = "veu-active-circle"
+
+    /// Persist the active circle ID to Keychain, synced via iCloud Keychain
+    /// so it survives app deletion and transfers across the user's devices.
+    public func saveActiveCircleID(_ circleID: String) {
+        guard let data = circleID.data(using: .utf8) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+            kSecAttrSynchronizable as String: true,
+            kSecValueData as String: data
+        ]
+        var status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecDuplicateItem {
+            // Delete old item (may be non-sync) and re-add as synchronizable
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: activeCircleAccount,
+                kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
+            status = SecItemAdd(query as CFDictionary, nil)
+        }
+    }
+
+    /// Load the active circle ID from Keychain. Returns nil if not set.
+    public func loadActiveCircleID() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let id = String(data: data, encoding: .utf8) else { return nil }
+        return id
+    }
+
+    /// Remove the active circle ID from Keychain (e.g. when the user clears all circles).
+    public func deleteActiveCircleID() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: activeCircleAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 

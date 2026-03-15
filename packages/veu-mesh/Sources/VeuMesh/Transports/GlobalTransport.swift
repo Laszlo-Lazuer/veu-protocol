@@ -58,7 +58,13 @@ public final class GlobalTransport: MeshTransportProtocol {
     private var reconnectAttempt = 0
     private var maxReconnectDelay: TimeInterval = 60
     private var isReconnecting = false
-    private var lastConnectedTime: Int = Int(Date().timeIntervalSince1970)
+
+    // Persisted to UserDefaults per topic so we resume from the right timestamp after restarts.
+    // Defaults to 0 (zero epoch) when missing — pulls full relay history on first connect.
+    private var lastConnectedTime: Int {
+        get { UserDefaults.standard.integer(forKey: "veu.lastConnected.\(topicHash)") }
+        set { UserDefaults.standard.set(newValue, forKey: "veu.lastConnected.\(topicHash)") }
+    }
 
     /// Create a GlobalTransport for a Circle.
     ///

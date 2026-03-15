@@ -26,14 +26,21 @@ public enum VoiceCallState: Equatable {
 /// Manages voice call lifecycle and audio pipeline.
 public final class VoiceCallManager: ObservableObject {
     @Published public private(set) var state: VoiceCallState = .idle
-    @Published public var isMuted: Bool = false
-    @Published public var isSpeakerOn: Bool = false
+    @Published public private(set) var isMuted: Bool = false
+    @Published public private(set) var isSpeakerOn: Bool = false
     @Published public private(set) var callDuration: TimeInterval = 0
 
     // Dependencies
     public var circleKey: Data?
     public var deviceID: String = ""
     public var callsign: String = ""
+    public var circleID: String = ""
+
+    /// Ed25519 signing key for relay authentication (set from AppState.identity).
+    public var signingKey: Curve25519.Signing.PrivateKey?
+
+    /// VoIP push token for offline call wakeup (set from PushKitManager).
+    public var pushToken: String?
 
     /// Send a voice signal to a peer via the Ghost Network (TCP).
     public var sendSignal: ((GhostMessage.VoiceCallPayload) -> Void)?
@@ -43,13 +50,27 @@ public final class VoiceCallManager: ObservableObject {
     #if os(iOS)
     private let audioEngine = AudioEngine()
     private let codec = AudioCodec()
+    private let jitterBuffer = JitterBuffer(maxDelay: 5)
     private var udpSocket: VoiceUDPSocket?
-    private var peerUDPConnected = false
+    /// Whether a direct UDP connection is active (readable by UI for transport badge).
+    public internal(set) var peerUDPConnected = false
     public let callKitManager = CallKitManager()
+    /// Voice relay WebSocket transport — fallback when direct UDP isn't available.
+    private var relayTransport: VoiceRelayTransport?
     /// Whether we initiated this call (affects CallKit API usage).
     private var isOutgoingCall = false
     /// Whether CallKit successfully reported this call.
     private var callKitActive = false
+    /// Whether CallKit has activated the audio session (didActivate fired).
+    private var audioSessionActivated = false
+    /// Whether the relay transport is actively handling audio (readable by UI for transport badge).
+    public internal(set) var usingRelay = false
+    /// Timer that fires after UDP grace period to fall back to relay.
+    private var udpFallbackTimer: Timer?
+    /// How long to wait for UDP to connect before falling back to relay.
+    private static let udpGracePeriod: TimeInterval = 3.0
+    /// Monitors network path changes for mid-call transport switching.
+    private let networkMonitor = NetworkTransitionManager()
     #endif
     private var sequenceNumber: UInt16 = 0
     private var ringTimer: Timer?
@@ -61,12 +82,35 @@ public final class VoiceCallManager: ObservableObject {
     private var peerAudioUDPPort: UInt16 = 0
     /// Pending active transition — deferred until CallKit activates audio session.
     private var pendingActive: (callID: String, peerDevice: String, peerCallsign: String)?
+    #if os(iOS)
+    private var routeChangeObserver: Any?
+    #endif
 
     private static let ringTimeout: TimeInterval = 30
 
     public init() {
         #if os(iOS)
         setupCallKitCallbacks()
+        setupNetworkMonitor()
+        #endif
+    }
+
+    // MARK: - Public Controls
+
+    /// Toggle microphone mute.
+    public func setMuted(_ muted: Bool) {
+        isMuted = muted
+        #if os(iOS)
+        audioEngine.isMuted = muted
+        #endif
+    }
+
+    /// Toggle speaker output. Only takes effect once the audio session is active.
+    public func setSpeaker(_ on: Bool) {
+        isSpeakerOn = on
+        #if os(iOS)
+        guard audioSessionActivated else { return }
+        audioEngine.setSpeakerEnabled(on)
         #endif
     }
 
@@ -94,15 +138,140 @@ public final class VoiceCallManager: ObservableObject {
         }
         callKitManager.onAudioSessionActivated = { [weak self] in
             guard let self = self else { return }
+            self.audioSessionActivated = true
             print("[VoiceCall] 🔊 CallKit audio session activated")
+            // Apply any pending speaker state now that the session is owned by CallKit
+            if self.isSpeakerOn {
+                self.audioEngine.setSpeakerEnabled(true)
+            }
             if self.pendingActive != nil {
                 self.pendingActive = nil
                 self.startAudioPipeline()
             }
         }
         callKitManager.onAudioSessionDeactivated = { [weak self] in
+            self?.audioSessionActivated = false
             print("[VoiceCall] 🔇 CallKit audio session deactivated")
         }
+
+        // Sync isSpeakerOn with the actual hardware route so the system CallKit
+        // speaker button (and Bluetooth/headphone plug events) keep the UI accurate.
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.audioSessionActivated else { return }
+            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+            let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+            if self.isSpeakerOn != onSpeaker {
+                self.isSpeakerOn = onSpeaker
+            }
+        }
+    }
+
+    /// Connect to the voice relay server as a fallback audio transport.
+    /// Only called when direct UDP audio fails to connect (peers not on same LAN).
+    private func setupRelayTransport() {
+        guard relayTransport == nil else { return } // Already set up
+        guard let key = circleKey, let signingKey = signingKey else {
+            print("[VoiceCall] ⚠️ No circle key or signing key — relay audio unavailable")
+            return
+        }
+        let transport = VoiceRelayTransport(circleKey: key)
+        transport.connect(deviceID: deviceID, circleID: circleID, signingKey: signingKey, pushToken: pushToken)
+
+        // Only wire audio callback — signaling stays on GhostMessage
+        transport.onAudioFrame = { [weak self] frameData in
+            self?.handleReceivedAudioFrame(frameData)
+        }
+        transport.onError = { message in
+            print("[VoiceCall] ⚠️ Relay error: \(message)")
+        }
+
+        self.relayTransport = transport
+        self.usingRelay = true
+        print("[VoiceCall] 📡 Voice relay connected (UDP fallback)")
+    }
+
+    /// Start a timer that falls back to relay if UDP doesn't connect in time.
+    private func startUDPFallbackTimer(callID: String) {
+        udpFallbackTimer?.invalidate()
+        udpFallbackTimer = Timer.scheduledTimer(withTimeInterval: Self.udpGracePeriod, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            if !self.peerUDPConnected {
+                print("[VoiceCall] ⏰ UDP didn't connect in \(Self.udpGracePeriod)s — falling back to relay")
+                self.setupRelayTransport()
+                // Register the call on the relay so audio frames get routed
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+    }
+
+    /// The active call ID (extracted from state for relay transport).
+    private var activeCallID: String? {
+        switch state {
+        case .outgoingRinging(let id, _), .incomingRinging(let id, _, _), .active(let id, _, _):
+            return id
+        default:
+            return nil
+        }
+    }
+
+    private func teardownRelayTransport() {
+        relayTransport?.disconnect()
+        relayTransport = nil
+        usingRelay = false
+    }
+
+    /// Wire network path monitor to handle mid-call WiFi ↔ cellular transitions.
+    private func setupNetworkMonitor() {
+        networkMonitor.onPathChanged = { [weak self] old, new in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+
+            print("[VoiceCall] 🔄 Network changed mid-call: \(old) → \(new)")
+
+            if new == .wifi && !self.peerUDPConnected {
+                // Switched to WiFi — try direct UDP (peer might now be on same LAN)
+                self.connectUDPToPeer()
+                if self.peerUDPConnected {
+                    print("[VoiceCall] ↑ Upgraded to direct UDP after WiFi reconnect")
+                    self.teardownRelayTransport()
+                }
+            } else if old == .wifi && new == .cellular && self.peerUDPConnected {
+                // Lost WiFi, on cellular — UDP won't work across NAT, fall back to relay
+                print("[VoiceCall] ↓ Lost WiFi, falling back to relay for audio")
+                self.peerUDPConnected = false
+                self.setupRelayTransport()
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+        networkMonitor.onNetworkLost = { [weak self] in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            print("[VoiceCall] ❌ Network lost mid-call — audio paused")
+        }
+        networkMonitor.onNetworkRestored = { [weak self] pathType in
+            guard let self = self else { return }
+            guard case .active = self.state else { return }
+            print("[VoiceCall] ✅ Network restored (\(pathType)) — resuming audio")
+            if pathType == .wifi {
+                self.connectUDPToPeer()
+            }
+            if !self.peerUDPConnected && !self.usingRelay {
+                self.setupRelayTransport()
+                if let callID = self.activeCallID {
+                    self.relayTransport?.activeCallID = callID
+                }
+            }
+        }
+        networkMonitor.start()
     }
     #endif
 
@@ -115,6 +284,11 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         isOutgoingCall = true
         callKitActive = false
+        audioSessionActivated = false
+        // Configure audio session BEFORE CallKit gets involved — avoids
+        // disrupting the session once CallKit activates it.
+        try? audioEngine.configureSession()
+        // Always set up UDP — if peer is on same LAN, this gives lowest latency
         setupUDP()
         callKitManager.startOutgoingCall(callID: callID, recipientName: recipientDeviceID) { [weak self] error in
             if error == nil {
@@ -124,6 +298,8 @@ public final class VoiceCallManager: ObservableObject {
         }
         #endif
 
+        // Signaling always goes through GhostMessage (uses existing transport priority:
+        // Local → Mesh → Relay). The voice relay is only for audio frame fallback.
         var payload = GhostMessage.VoiceCallPayload(
             callID: callID,
             action: .offer,
@@ -134,9 +310,10 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         payload.audioUDPPort = udpSocket?.localPort
         payload.audioAddresses = Self.localIPAddresses()
-        print("[VoiceCall] 📤 Offer UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? [])")
+        print("[VoiceCall] 📤 Offer via mesh (UDP port: \(payload.audioUDPPort ?? 0), addrs: \(payload.audioAddresses ?? []))")
         #endif
         sendSignal?(payload)
+
         state = .outgoingRinging(callID: callID, recipientDevice: recipientDeviceID)
         startRingTimer(callID: callID)
         return callID
@@ -161,6 +338,7 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         isOutgoingCall = false
         callKitActive = false
+        audioSessionActivated = false
         #endif
 
         state = .incomingRinging(
@@ -211,6 +389,9 @@ public final class VoiceCallManager: ObservableObject {
         cancelRingTimer()
 
         #if os(iOS)
+        // Configure audio session BEFORE CallKit activates it — avoids disrupting
+        // the session once didActivate fires.
+        try? audioEngine.configureSession()
         setupUDP()
         connectUDPToPeer()
         #endif
@@ -388,10 +569,22 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         guard frameData.count >= 3 else { return }
 
-        // Parse: [2-byte seq][compressed audio] — skip seq (TCP delivers in order)
+        // Parse: [2-byte big-endian seq][compressed audio]
+        let seq = frameData.withUnsafeBytes { ptr -> UInt16 in
+            ptr.load(as: UInt16.self).bigEndian
+        }
         let compressedAudio = frameData.subdata(in: 2..<frameData.count)
-        let pcmData = codec.decode(compressedAudio)
-        audioEngine.playBuffer(pcmData)
+
+        if seq < 3 || seq % 500 == 0 {
+            print("[VoiceCall] 📥 Frame #\(seq): \(compressedAudio.count) bytes compressed")
+        }
+
+        // Insert into jitter buffer and drain in-order frames
+        jitterBuffer.insert(sequence: seq, data: compressedAudio)
+        while let ordered = jitterBuffer.pull() {
+            let pcmData = codec.decode(ordered)
+            audioEngine.playBuffer(pcmData)
+        }
         #endif
     }
 
@@ -462,16 +655,41 @@ public final class VoiceCallManager: ObservableObject {
             callKitManager.reportOutgoingCallConnected(callID: callID)
         }
 
-        // Defer audio start until CallKit activates session (didActivate callback)
-        pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+        // If UDP didn't connect (peer has no direct path), start relay fallback timer.
+        // Gives UDP a grace period before falling back to the relay for audio frames.
+        if !peerUDPConnected {
+            if peerAudioAddresses.isEmpty || peerAudioUDPPort == 0 {
+                // Peer sent no UDP info at all — they're definitely remote. Use relay immediately.
+                print("[VoiceCall] 📡 No peer UDP info — using relay for audio immediately")
+                setupRelayTransport()
+                if let callID = activeCallID {
+                    relayTransport?.activeCallID = callID
+                }
+            } else {
+                // Peer sent UDP info but we haven't connected yet — give it a few seconds
+                startUDPFallbackTimer(callID: callID)
+            }
+        } else {
+            print("[VoiceCall] 🔗 UDP connected — using direct audio path")
+        }
 
-        // Fallback: if CallKit doesn't activate quickly (or isn't active), start audio directly
-        let timeout: TimeInterval = callKitActive ? 1.5 : 0.1
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
-            guard let self = self, self.pendingActive != nil else { return }
-            print("[VoiceCall] ⏰ Starting audio directly (CallKit active: \(self.callKitActive))")
-            self.pendingActive = nil
-            self.startAudioPipeline()
+        // Start audio only when the audio session is actually activated.
+        // For outgoing calls, didActivate fires during call setup (before answer).
+        // For incoming calls, didActivate fires AFTER the user answers.
+        if audioSessionActivated {
+            print("[VoiceCall] ⏰ Audio session already active — starting audio immediately")
+            startAudioPipeline()
+        } else {
+            pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+            print("[VoiceCall] ⏳ Waiting for CallKit audio session activation…")
+
+            // Fallback: if CallKit doesn't activate within a reasonable timeout, start directly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                guard let self = self, self.pendingActive != nil else { return }
+                print("[VoiceCall] ⏰ CallKit timeout — starting audio directly (activating session)")
+                self.pendingActive = nil
+                self.startAudioPipeline()
+            }
         }
         #else
         startAudioPipeline()
@@ -481,12 +699,17 @@ public final class VoiceCallManager: ObservableObject {
     private func startAudioPipeline() {
         #if os(iOS)
         sequenceNumber = 0
+        jitterBuffer.reset()
         do {
-            try audioEngine.start()
+            // Wire up capture callback BEFORE starting the engine so no frames are missed
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
-            print("[VoiceCall] 🎙️ Audio pipeline started (UDP: \(peerUDPConnected ? "yes" : "no, TCP fallback"))")
+            // If CallKit activated the session, don't re-activate. Otherwise activate ourselves.
+            let needsActivation = !audioSessionActivated
+            try audioEngine.start(activateSession: needsActivation)
+            let transport = peerUDPConnected ? "UDP (direct)" : usingRelay ? "Relay (remote)" : "TCP mesh (fallback)"
+            print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), transport: \(transport), selfActivated: \(needsActivation))")
         } catch {
             print("[VoiceCallManager] Failed to start audio: \(error)")
             endCallCleanup(reason: "Audio error")
@@ -496,6 +719,8 @@ public final class VoiceCallManager: ObservableObject {
 
     private func processCapturedAudio(_ pcmData: Data) {
         #if os(iOS)
+        guard case .active = state else { return }
+
         let compressed = codec.encode(pcmData)
 
         // Frame: [2-byte big-endian seq][compressed audio]
@@ -505,9 +730,15 @@ public final class VoiceCallManager: ObservableObject {
         frame.append(compressed)
         sequenceNumber &+= 1
 
-        // Prefer UDP, fall back to TCP
+        if sequenceNumber <= 3 || sequenceNumber % 500 == 0 {
+            print("[VoiceCall] 📤 Frame #\(sequenceNumber): \(compressed.count) bytes compressed, UDP=\(peerUDPConnected), relay=\(usingRelay)")
+        }
+
+        // Transport priority: UDP (direct/local) > Relay (remote) > TCP mesh fallback
         if peerUDPConnected, let socket = udpSocket {
             socket.sendFrame(frame)
+        } else if usingRelay, let relay = relayTransport {
+            relay.sendAudioFrame(frame)
         } else {
             sendAudioFrame?(frame)
         }
@@ -553,6 +784,7 @@ public final class VoiceCallManager: ObservableObject {
         callKitManager.clearAllCalls()
         isOutgoingCall = false
         callKitActive = false
+        audioSessionActivated = false
         #endif
 
         peerAudioAddresses = []
@@ -560,9 +792,19 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         audioEngine.stop()
         audioEngine.onCapturedBuffer = nil
+        jitterBuffer.reset()
         udpSocket?.stop()
         udpSocket = nil
         peerUDPConnected = false
+        udpFallbackTimer?.invalidate()
+        udpFallbackTimer = nil
+        teardownRelayTransport()
+        if let obs = routeChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            routeChangeObserver = nil
+        }
+        isMuted = false
+        isSpeakerOn = false
         #endif
         state = .ended(reason: reason)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in

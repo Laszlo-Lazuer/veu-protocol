@@ -19,11 +19,14 @@ public final class AppState {
     /// Active circle ID (nil if none selected).
     public private(set) var activeCircleID: String? {
         didSet {
-            // Persist to UserDefaults
+            // Persist to both UserDefaults and Keychain so it survives Xcode reinstalls
+            // that clear UserDefaults while leaving Keychain intact.
             if let id = activeCircleID {
                 UserDefaults.standard.set(id, forKey: Self.activeCircleKey)
+                KeychainService.shared.saveActiveCircleID(id)
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.activeCircleKey)
+                KeychainService.shared.deleteActiveCircleID()
             }
         }
     }
@@ -79,8 +82,11 @@ public final class AppState {
         if !isTestMode {
             let keychain = KeychainService.shared
             state.circleKeys = keychain.loadAllCircleKeys()
-            if let savedActiveID = UserDefaults.standard.string(forKey: activeCircleKey),
-               state.circleKeys[savedActiveID] != nil {
+            // Prefer Keychain for activeCircleID (survives Xcode reinstalls that clear UserDefaults).
+            // Fall back to UserDefaults for compatibility.
+            let savedActiveID = keychain.loadActiveCircleID()
+                ?? UserDefaults.standard.string(forKey: activeCircleKey)
+            if let savedActiveID, state.circleKeys[savedActiveID] != nil {
                 state.activeCircleID = savedActiveID
             }
             
