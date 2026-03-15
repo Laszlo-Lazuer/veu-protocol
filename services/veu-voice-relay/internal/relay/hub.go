@@ -10,6 +10,7 @@ import (
 
 "github.com/veu-protocol/veu-voice-relay/internal/auth"
 "github.com/veu-protocol/veu-voice-relay/internal/session"
+"golang.org/x/time/rate"
 "nhooyr.io/websocket"
 )
 
@@ -20,6 +21,12 @@ callIDLength    = 36 // UUID string length
 cleanupInterval = 10 * time.Second
 idleTimeout     = 60 * time.Second
 maxCallDuration = 1 * time.Hour
+
+// Rate limits per connection
+signalingRate  = 10  // signaling messages per second
+signalingBurst = 20  // burst allowance for signaling
+audioRate      = 100 // audio frames per second (50fps Opus = typical)
+audioBurst     = 150 // burst allowance for audio
 )
 
 // SignalingMessage is the JSON wire format for all signaling messages.
@@ -65,6 +72,8 @@ h.readPump(r.Context(), conn)
 
 func (h *Hub) readPump(ctx context.Context, conn *websocket.Conn) {
 var deviceKey string
+sigLimiter := rate.NewLimiter(signalingRate, signalingBurst)
+audioLimiter := rate.NewLimiter(audioRate, audioBurst)
 
 defer func() {
 if deviceKey != "" {
@@ -87,8 +96,16 @@ return
 
 switch msgType {
 case websocket.MessageText:
+if !sigLimiter.Allow() {
+h.sendError(conn, "rate limit exceeded")
+slog.Warn("signaling rate limit hit", "device_key", deviceKey)
+continue
+}
 h.handleSignaling(ctx, conn, data, &deviceKey)
 case websocket.MessageBinary:
+if !audioLimiter.Allow() {
+continue // silently drop excess audio frames
+}
 h.handleAudioFrame(ctx, conn, data, deviceKey)
 }
 }
