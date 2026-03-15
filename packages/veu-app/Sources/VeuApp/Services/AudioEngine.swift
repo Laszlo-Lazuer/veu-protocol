@@ -44,12 +44,20 @@ public final class AudioEngine {
     }
 
     /// Start capturing microphone audio and preparing for playback.
+    ///
+    /// When CallKit is managing the session, `activateSession` must be `false` —
+    /// the session is already configured by `configureSession()` before CallKit
+    /// activation, and calling `setCategory` again after `didActivate` disrupts
+    /// the CallKit-owned audio session.
     public func start(activateSession: Bool = false) throws {
         guard !isRunning else { return }
-        try configureSession()
         if activateSession {
+            // Non-CallKit path: configure and activate the session ourselves.
+            try configureSession()
             try self.activateSession()
         }
+        // CallKit path: session is already configured (in startCall/performAccept)
+        // and activated by the system. Do NOT call setCategory here.
 
         let engine = AVAudioEngine()
         let playerNode = AVAudioPlayerNode()
