@@ -511,6 +511,51 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
+// MARK: - Photo Library Picker
+
+import PhotosUI
+
+struct PhotoLibraryPicker: UIViewControllerRepresentable {
+    let onPick: (Data) -> Void
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        let onPick: (Data) -> Void
+
+        init(onPick: @escaping (Data) -> Void) {
+            self.onPick = onPick
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard let provider = results.first?.itemProvider,
+                  provider.canLoadObject(ofClass: UIImage.self) else { return }
+
+            provider.loadObject(ofClass: UIImage.self) { object, _ in
+                guard let image = object as? UIImage,
+                      let data = image.jpegData(compressionQuality: 1.0) else { return }
+                DispatchQueue.main.async {
+                    self.onPick(data)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Proximity Search Animation
 
 struct ProximitySearchView: View {
@@ -1936,13 +1981,18 @@ struct CaptureSheet: View {
     @State private var burnHours: Double = 24
     @State private var selectedRecipients: Set<String> = []  // Device IDs
     @State private var showRecipientPicker = false
+    @State private var showPhotoPicker = false
 
-    // Async compression state — keeps heavy work off the main thread.
-    @State private var isCompressing = false
+    // Processing state — only runs when Seal is tapped.
+    @State private var isProcessing = false
+    @State private var processingStatus = ""
+
+    // Legacy compat — kept for compressForSending signature
     @State private var compressedData: Data?
     @State private var compressedSize: Int?
     @State private var compressionError: String?
     @State private var compressionTask: Task<Void, Never>?
+    @State private var isCompressing: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -1953,7 +2003,6 @@ struct CaptureSheet: View {
                         capturedData = imageData
                         capturedImage = UIImage(data: imageData)
                         useCamera = false
-                        triggerCompression()
                     }
                     .frame(height: 300)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -1988,7 +2037,7 @@ struct CaptureSheet: View {
                         .cornerRadius(12)
                     }
 
-                    // Photo preview + compression status
+                    // Photo preview
                     if let preview = capturedImage {
                         ZStack {
                             Image(uiImage: preview)
@@ -1998,61 +2047,67 @@ struct CaptureSheet: View {
                                 .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                            if isCompressing {
-                                Color.black.opacity(0.5)
+                            if isProcessing {
+                                Color.black.opacity(0.6)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
                                 VStack(spacing: 8) {
                                     ProgressView()
                                         .tint(.white)
-                                    Text("Optimizing for relay…")
+                                    Text(processingStatus)
                                         .font(.caption)
                                         .foregroundColor(.white)
                                 }
                             }
 
-                            // Retake button
-                            VStack {
-                                HStack {
-                                    Spacer()
-                                    Button {
-                                        capturedData = nil
-                                        capturedImage = nil
-                                        compressedData = nil
-                                        compressedSize = nil
-                                        compressionError = nil
-                                        useCamera = true
-                                    } label: {
-                                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                                            .font(.caption)
-                                            .padding(8)
-                                            .background(.ultraThinMaterial)
-                                            .clipShape(Circle())
+                            // Retake + Library buttons (top row)
+                            if !isProcessing {
+                                VStack {
+                                    HStack {
+                                        Button {
+                                            showPhotoPicker = true
+                                        } label: {
+                                            Image(systemName: "photo.on.rectangle")
+                                                .font(.caption)
+                                                .padding(8)
+                                                .background(.ultraThinMaterial)
+                                                .clipShape(Circle())
+                                        }
+                                        .padding(8)
+                                        Spacer()
+                                        Button {
+                                            capturedData = nil
+                                            capturedImage = nil
+                                            useCamera = true
+                                        } label: {
+                                            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                                .font(.caption)
+                                                .padding(8)
+                                                .background(.ultraThinMaterial)
+                                                .clipShape(Circle())
+                                        }
+                                        .padding(8)
                                     }
-                                    .padding(8)
+                                    Spacer()
                                 }
-                                Spacer()
                             }
                         }
                         .frame(height: 200)
 
-                        // Size info (uses cached result, never recompresses)
                         if let raw = capturedData {
-                            if let size = compressedSize {
-                                Label("Photo: \(formatBytes(raw.count)) → \(formatBytes(size))",
-                                      systemImage: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
-                                    .font(.caption)
-                            } else if let err = compressionError {
-                                Label(err, systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.orange)
-                                    .font(.caption)
-                            } else if !isCompressing {
-                                Label("Photo: \(formatBytes(raw.count))",
-                                      systemImage: "photo.fill")
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
-                            }
+                            Label("Photo: \(formatBytes(raw.count))",
+                                  systemImage: "photo.fill")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
                         }
+                    } else {
+                        // No photo yet — show Library button alongside Camera
+                        Button {
+                            showPhotoPicker = true
+                        } label: {
+                            Label("Choose from Library", systemImage: "photo.on.rectangle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
 
                     TextField("Enter message…", text: $messageText, axis: .vertical)
@@ -2071,19 +2126,19 @@ struct CaptureSheet: View {
                     }
 
                     if sealed {
-                        Label("Sealed & Queued for Sync", systemImage: "checkmark.seal.fill")
+                        Label("Sealed ✓", systemImage: "checkmark.seal.fill")
                             .foregroundColor(.green)
                             .font(.headline)
                     } else {
                         Button {
                             sealContent()
                         } label: {
-                            Label(isCompressing ? "Processing…" : "Seal", systemImage: "lock.shield")
+                            Label("Seal", systemImage: "lock.shield")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
-                        .disabled((capturedData == nil && messageText.isEmpty) || isCompressing)
+                        .disabled((capturedData == nil && messageText.isEmpty) || isProcessing)
                     }
                 }
 
@@ -2100,42 +2155,15 @@ struct CaptureSheet: View {
             .sheet(isPresented: $showRecipientPicker) {
                 recipientPickerSheet
             }
-        }
-    }
-
-    /// Kick off compression on a background thread. Only recompresses
-    /// when the raw image data changes — typing a caption won't retrigger.
-    private func triggerCompression() {
-        compressionTask?.cancel()
-        guard let raw = capturedData else { return }
-
-        isCompressing = true
-        compressedData = nil
-        compressedSize = nil
-        compressionError = nil
-
-        compressionTask = Task.detached(priority: .userInitiated) {
-            do {
-                let caption = ""  // Preview uses empty caption; seal uses actual caption.
-                let burnAfter = Int(Date().timeIntervalSince1970) + Int(24 * 3600)
-                let compressed = try await MainActor.run {
-                    try compressForSending(raw, caption: caption, burnAfter: burnAfter, targetRecipients: nil)
-                }
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    compressedData = compressed
-                    compressedSize = compressed.count
-                    isCompressing = false
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    compressionError = error.localizedDescription
-                    isCompressing = false
+            .sheet(isPresented: $showPhotoPicker) {
+                PhotoLibraryPicker { imageData in
+                    capturedData = imageData
+                    capturedImage = UIImage(data: imageData)
                 }
             }
         }
     }
+
     
     @ViewBuilder
     private var recipientSelector: some View {
@@ -2413,37 +2441,65 @@ struct CaptureSheet: View {
     private func sealContent() {
         let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
-        
-        // Convert selected recipients to array (nil = everyone)
         let targets: [String]? = selectedRecipients.isEmpty ? nil : Array(selectedRecipients)
 
-        do {
-            let data: Data
-            if let imageData = capturedData {
-                // Use pre-compressed data when available; fall back to on-demand compression.
-                let compressed: Data
-                if let cached = compressedData {
-                    compressed = cached
-                } else {
-                    compressed = try compressForSending(
+        // Text-only message — no processing needed
+        guard let imageData = capturedData else {
+            do {
+                let data = Data(caption.utf8)
+                guard !data.isEmpty else { return }
+                coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+                HapticEngine.handshakeHeartbeat()
+                sealed = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    isPresented = false
+                }
+            }
+            return
+        }
+
+        // Photo — run sanitization + compression on background thread
+        isProcessing = true
+        processingStatus = "Removing sensor fingerprint…"
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                await MainActor.run { processingStatus = "Removing sensor fingerprint…" }
+
+                let compressed = try await MainActor.run {
+                    try compressForSending(
                         imageData,
                         caption: caption,
                         burnAfter: burnEpoch,
                         targetRecipients: targets
                     )
                 }
-                data = try encodePostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
-            } else {
-                data = Data(caption.utf8)
+
+                await MainActor.run { processingStatus = "Encrypting…" }
+                let data = try await MainActor.run {
+                    try encodePostPayload(imageData: compressed, caption: caption.isEmpty ? nil : caption)
+                }
+
+                await MainActor.run {
+                    coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
+                    HapticEngine.handshakeHeartbeat()
+                    processingStatus = "Sealed ✓"
+                    sealed = true
+                    isProcessing = false
+                }
+
+                // Brief pause to show confirmation, then dismiss
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                await MainActor.run {
+                    isPresented = false
+                }
+            } catch {
+                await MainActor.run {
+                    isProcessing = false
+                    processingStatus = ""
+                    coordinator.sealError = error.localizedDescription
+                }
             }
-
-            guard !data.isEmpty else { return }
-
-            coordinator.sealArtifact(data: data, burnAfter: burnEpoch, targetRecipients: targets)
-            HapticEngine.handshakeHeartbeat()
-            sealed = true
-        } catch {
-            coordinator.sealError = error.localizedDescription
         }
     }
 }
