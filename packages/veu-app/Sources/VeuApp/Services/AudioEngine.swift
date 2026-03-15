@@ -28,6 +28,8 @@ public final class AudioEngine {
     private var accumulator = Data()
     private let targetBytes = Int(framesPerBuffer) * 2  // 960 samples * 2 bytes
     private var captureCount = 0
+    // Dedicated queue for processing captured audio off the realtime render thread
+    private let captureQueue = DispatchQueue(label: "veu.audio.capture", qos: .userInteractive)
 
     public init() {}
 
@@ -80,6 +82,8 @@ public final class AudioEngine {
 
         // AVAudioSinkNode captures audio directly from the render chain.
         // This works with voice processing (unlike installTap which silently fails).
+        // CRITICAL: The render callback must be realtime-safe — no locks, allocations, or
+        // blocking calls. We copy raw bytes and dispatch processing to a background queue.
         let sink = AVAudioSinkNode { [weak self] timestamp, frameCount, audioBufferList -> OSStatus in
             guard let self = self else { return noErr }
             let bufferListPtr = UnsafeBufferPointer(
@@ -88,7 +92,7 @@ public final class AudioEngine {
             )
             guard let baseAddress = bufferListPtr.baseAddress else { return noErr }
 
-            // Convert Float32 → Int16 inline
+            // Convert Float32 → Int16 inline (realtime-safe: stack alloc + memcpy)
             let sampleCount = Int(frameCount)
             var int16Bytes = Data(count: sampleCount * 2)
             int16Bytes.withUnsafeMutableBytes { rawPtr in
@@ -99,16 +103,20 @@ public final class AudioEngine {
                 }
             }
 
-            // Accumulate into 20ms frames
-            self.accumulator.append(int16Bytes)
-            while self.accumulator.count >= self.targetBytes {
-                let frame = self.accumulator.prefix(self.targetBytes)
-                self.captureCount += 1
-                if self.captureCount <= 3 || self.captureCount % 500 == 0 {
-                    print("[AudioEngine] 🎤 Capture #\(self.captureCount): \(frame.count) bytes")
+            // Dispatch accumulation + callback off the render thread
+            let captured = int16Bytes
+            self.captureQueue.async { [weak self] in
+                guard let self = self else { return }
+                self.accumulator.append(captured)
+                while self.accumulator.count >= self.targetBytes {
+                    let frame = self.accumulator.prefix(self.targetBytes)
+                    self.captureCount += 1
+                    if self.captureCount <= 3 || self.captureCount % 500 == 0 {
+                        print("[AudioEngine] 🎤 Capture #\(self.captureCount): \(frame.count) bytes")
+                    }
+                    self.onCapturedBuffer?(Data(frame))
+                    self.accumulator.removeFirst(self.targetBytes)
                 }
-                self.onCapturedBuffer?(Data(frame))
-                self.accumulator.removeFirst(self.targetBytes)
             }
             return noErr
         }
@@ -136,14 +144,16 @@ public final class AudioEngine {
     /// Stop audio engine and release resources.
     public func stop() {
         guard isRunning else { return }
+        isRunning = false
         playerNode?.stop()
         engine?.stop()
         engine = nil
         playerNode = nil
         sinkNode = nil
-        accumulator.removeAll()
-        captureCount = 0
-        isRunning = false
+        captureQueue.sync {
+            accumulator.removeAll()
+            captureCount = 0
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

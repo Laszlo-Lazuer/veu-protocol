@@ -522,6 +522,10 @@ public final class VoiceCallManager: ObservableObject {
         }
         let compressedAudio = frameData.subdata(in: 2..<frameData.count)
 
+        if seq < 3 || seq % 500 == 0 {
+            print("[VoiceCall] 📥 Frame #\(seq): \(compressedAudio.count) bytes compressed")
+        }
+
         // Insert into jitter buffer and drain in-order frames
         jitterBuffer.insert(sequence: seq, data: compressedAudio)
         while let ordered = jitterBuffer.pull() {
@@ -619,16 +623,21 @@ public final class VoiceCallManager: ObservableObject {
             print("[VoiceCall] 🔗 UDP connected — using direct audio path")
         }
 
-        // Defer audio start until CallKit activates session (didActivate callback)
-        pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
+        // If CallKit already activated the audio session (outgoing call flow), start immediately.
+        // Otherwise defer until the didActivate callback fires.
+        if callKitActive {
+            print("[VoiceCall] ⏰ CallKit already active — starting audio immediately")
+            startAudioPipeline()
+        } else {
+            pendingActive = (callID: callID, peerDevice: peerDevice, peerCallsign: peerCallsign)
 
-        // Fallback: if CallKit doesn't activate quickly (or isn't active), start audio directly
-        let timeout: TimeInterval = callKitActive ? 1.5 : 0.1
-        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
-            guard let self = self, self.pendingActive != nil else { return }
-            print("[VoiceCall] ⏰ Starting audio directly (CallKit active: \(self.callKitActive))")
-            self.pendingActive = nil
-            self.startAudioPipeline()
+            // Fallback: if CallKit doesn't activate within a reasonable timeout, start directly
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self = self, self.pendingActive != nil else { return }
+                print("[VoiceCall] ⏰ CallKit timeout — starting audio directly")
+                self.pendingActive = nil
+                self.startAudioPipeline()
+            }
         }
         #else
         startAudioPipeline()
@@ -640,12 +649,13 @@ public final class VoiceCallManager: ObservableObject {
         sequenceNumber = 0
         jitterBuffer.reset()
         do {
-            // CallKit already activated the session for 1:1 calls.
-            // For room calls (no CallKit), we activate ourselves.
-            try audioEngine.start(activateSession: !callKitActive)
+            // Wire up capture callback BEFORE starting the engine so no frames are missed
             audioEngine.onCapturedBuffer = { [weak self] pcmData in
                 self?.processCapturedAudio(pcmData)
             }
+            // CallKit already activated the session for 1:1 calls.
+            // For room calls (no CallKit), we activate ourselves.
+            try audioEngine.start(activateSession: !callKitActive)
             let transport = peerUDPConnected ? "UDP (direct)" : usingRelay ? "Relay (remote)" : "TCP mesh (fallback)"
             print("[VoiceCall] 🎙️ Audio pipeline started (Opus: \(codec.opusAvailable), transport: \(transport))")
         } catch {
@@ -657,6 +667,8 @@ public final class VoiceCallManager: ObservableObject {
 
     private func processCapturedAudio(_ pcmData: Data) {
         #if os(iOS)
+        guard case .active = state else { return }
+
         let compressed = codec.encode(pcmData)
 
         // Frame: [2-byte big-endian seq][compressed audio]
@@ -665,6 +677,10 @@ public final class VoiceCallManager: ObservableObject {
         frame.append(Data(bytes: &seq, count: 2))
         frame.append(compressed)
         sequenceNumber &+= 1
+
+        if sequenceNumber <= 3 || sequenceNumber % 500 == 0 {
+            print("[VoiceCall] 📤 Frame #\(sequenceNumber): \(compressed.count) bytes compressed, UDP=\(peerUDPConnected), relay=\(usingRelay)")
+        }
 
         // Transport priority: UDP (direct/local) > Relay (remote) > TCP mesh fallback
         if peerUDPConnected, let socket = udpSocket {
