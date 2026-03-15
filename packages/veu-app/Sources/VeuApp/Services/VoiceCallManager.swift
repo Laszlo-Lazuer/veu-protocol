@@ -26,8 +26,8 @@ public enum VoiceCallState: Equatable {
 /// Manages voice call lifecycle and audio pipeline.
 public final class VoiceCallManager: ObservableObject {
     @Published public private(set) var state: VoiceCallState = .idle
-    @Published public var isMuted: Bool = false
-    @Published public var isSpeakerOn: Bool = false
+    @Published public private(set) var isMuted: Bool = false
+    @Published public private(set) var isSpeakerOn: Bool = false
     @Published public private(set) var callDuration: TimeInterval = 0
 
     // Dependencies
@@ -82,6 +82,9 @@ public final class VoiceCallManager: ObservableObject {
     private var peerAudioUDPPort: UInt16 = 0
     /// Pending active transition — deferred until CallKit activates audio session.
     private var pendingActive: (callID: String, peerDevice: String, peerCallsign: String)?
+    #if os(iOS)
+    private var routeChangeObserver: Any?
+    #endif
 
     private static let ringTimeout: TimeInterval = 30
 
@@ -89,6 +92,25 @@ public final class VoiceCallManager: ObservableObject {
         #if os(iOS)
         setupCallKitCallbacks()
         setupNetworkMonitor()
+        #endif
+    }
+
+    // MARK: - Public Controls
+
+    /// Toggle microphone mute.
+    public func setMuted(_ muted: Bool) {
+        isMuted = muted
+        #if os(iOS)
+        audioEngine.isMuted = muted
+        #endif
+    }
+
+    /// Toggle speaker output. Only takes effect once the audio session is active.
+    public func setSpeaker(_ on: Bool) {
+        isSpeakerOn = on
+        #if os(iOS)
+        guard audioSessionActivated else { return }
+        audioEngine.setSpeakerEnabled(on)
         #endif
     }
 
@@ -118,6 +140,10 @@ public final class VoiceCallManager: ObservableObject {
             guard let self = self else { return }
             self.audioSessionActivated = true
             print("[VoiceCall] 🔊 CallKit audio session activated")
+            // Apply any pending speaker state now that the session is owned by CallKit
+            if self.isSpeakerOn {
+                self.audioEngine.setSpeakerEnabled(true)
+            }
             if self.pendingActive != nil {
                 self.pendingActive = nil
                 self.startAudioPipeline()
@@ -126,6 +152,21 @@ public final class VoiceCallManager: ObservableObject {
         callKitManager.onAudioSessionDeactivated = { [weak self] in
             self?.audioSessionActivated = false
             print("[VoiceCall] 🔇 CallKit audio session deactivated")
+        }
+
+        // Sync isSpeakerOn with the actual hardware route so the system CallKit
+        // speaker button (and Bluetooth/headphone plug events) keep the UI accurate.
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, self.audioSessionActivated else { return }
+            let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+            let onSpeaker = outputs.contains { $0.portType == .builtInSpeaker }
+            if self.isSpeakerOn != onSpeaker {
+                self.isSpeakerOn = onSpeaker
+            }
         }
     }
 
@@ -758,6 +799,12 @@ public final class VoiceCallManager: ObservableObject {
         udpFallbackTimer?.invalidate()
         udpFallbackTimer = nil
         teardownRelayTransport()
+        if let obs = routeChangeObserver {
+            NotificationCenter.default.removeObserver(obs)
+            routeChangeObserver = nil
+        }
+        isMuted = false
+        isSpeakerOn = false
         #endif
         state = .ended(reason: reason)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in

@@ -141,7 +141,7 @@ public struct ActiveCallView: View {
                     color: callManager.isMuted ? .red : .white.opacity(0.3),
                     label: callManager.isMuted ? "Unmute" : "Mute"
                 ) {
-                    callManager.isMuted.toggle()
+                    callManager.setMuted(!callManager.isMuted)
                 }
 
                 // End Call
@@ -160,7 +160,7 @@ public struct ActiveCallView: View {
                     color: callManager.isSpeakerOn ? .blue : .white.opacity(0.3),
                     label: "Speaker"
                 ) {
-                    callManager.isSpeakerOn.toggle()
+                    callManager.setSpeaker(!callManager.isSpeakerOn)
                 }
             }
 

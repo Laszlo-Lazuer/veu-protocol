@@ -33,7 +33,7 @@ public final class AudioEngine {
     /// Configure the audio session for voice chat.
     public func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .allowBluetoothA2DP])
         try session.setPreferredSampleRate(Self.sampleRate)
         try session.setPreferredIOBufferDuration(Self.frameDuration)
     }
