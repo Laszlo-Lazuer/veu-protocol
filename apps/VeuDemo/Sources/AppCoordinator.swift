@@ -973,13 +973,13 @@ extension AppCoordinator: ProximitySessionDelegate {
     /// Toggle mute.
     func toggleMute() {
         isMuted.toggle()
-        voiceCallManager?.isMuted = isMuted
+        voiceCallManager?.setMuted(isMuted)
     }
 
     /// Toggle speaker.
     func toggleSpeaker() {
         isSpeakerOn.toggle()
-        voiceCallManager?.isSpeakerOn = isSpeakerOn
+        voiceCallManager?.setSpeaker(isSpeakerOn)
     }
 
     /// Handle an incoming voice signal from the Ghost Network.
