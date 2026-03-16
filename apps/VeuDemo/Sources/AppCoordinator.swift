@@ -99,6 +99,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var inviteAuraColorHex: String?
     @Published var inviteLink: String?
     @Published var pendingInviteToken: String?
+    /// When set, the next invite will add the invitee to this existing circle
+    /// (transferring its key) instead of creating a fresh circle.
+    @Published var inviteExistingCircleID: String?
     private(set) var inviteService: InviteService?
 
     // MARK: - Internal
@@ -354,9 +357,29 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     func generateInvite() {
         guard let state = appState else { return }
 
-        // Auto-create a circle if none exists yet (enables remote-only onboarding)
-        var circleID = state.activeCircleID
+        // Determine circle: use explicitly selected existing circle, active circle, or auto-create
+        var circleID = inviteExistingCircleID ?? state.activeCircleID
+
+        if let existingID = inviteExistingCircleID,
+           let key = state.circleKeys[existingID] {
+            // Adding to an existing circle — transfer this key
+            circleID = existingID
+
+            let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
+            let service = InviteService(relayURL: relay)
+            service.existingCircleKey = key
+            self.inviteService = service
+            invitePhase = .depositing
+            setupInviteObservers(service: service)
+            Task { @MainActor in
+                do { try await service.generateInvite(circleID: existingID) }
+                catch { self.invitePhase = .failed(error.localizedDescription) }
+            }
+            return
+        }
+
         if circleID == nil {
+            // No circle at all — auto-create
             do {
                 circleID = try state.createCircle()
                 print("[AppCoordinator] Auto-created circle \(circleID!.prefix(8))… for invite")
@@ -372,7 +395,18 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         self.inviteService = service
         invitePhase = .depositing
 
-        // Observe invite service state changes
+        setupInviteObservers(service: service)
+
+        Task { @MainActor in
+            do {
+                try await service.generateInvite(circleID: circleID)
+            } catch {
+                self.invitePhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func setupInviteObservers(service: InviteService) {
         service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
             self?.invitePhase = phase
         }.store(in: &cancellables)
@@ -385,14 +419,6 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         service.$inviteLink.receive(on: DispatchQueue.main).sink { [weak self] link in
             self?.inviteLink = link
         }.store(in: &cancellables)
-
-        Task { @MainActor in
-            do {
-                try await service.generateInvite(circleID: circleID)
-            } catch {
-                self.invitePhase = .failed(error.localizedDescription)
-            }
-        }
     }
 
     /// Handle a `veu://invite?id=<token>` deep link.
@@ -411,15 +437,7 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         self.inviteService = service
         invitePhase = .claiming
 
-        service.$phase.receive(on: DispatchQueue.main).sink { [weak self] phase in
-            self?.invitePhase = phase
-        }.store(in: &cancellables)
-        service.$shortCode.receive(on: DispatchQueue.main).sink { [weak self] code in
-            self?.inviteShortCode = code
-        }.store(in: &cancellables)
-        service.$auraColorHex.receive(on: DispatchQueue.main).sink { [weak self] hex in
-            self?.inviteAuraColorHex = hex
-        }.store(in: &cancellables)
+        setupInviteObservers(service: service)
 
         Task { @MainActor in
             do {
@@ -497,6 +515,7 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         inviteAuraColorHex = nil
         inviteLink = nil
         pendingInviteToken = nil
+        inviteExistingCircleID = nil
     }
 
     private func updateHandshakeState(from vm: HandshakeViewModel) {
@@ -524,12 +543,23 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
+            let myDeviceID = state.identity.deviceID
+            timelineEntries = vm.entries.filter {
+                $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
+                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
+            }
             reloadChat()
             reloadCircleMembers()
         } catch {
             print("Reload failed: \(error)")
         }
+    }
+
+    /// Check if a timeline entry is visible to the current user based on recipient targeting.
+    /// Returns true if targetRecipients is nil (legacy/broadcast) or myDeviceID is in the list.
+    private func isVisibleToMe(entry: TimelineEntry, myDeviceID: String) -> Bool {
+        guard let recipients = entry.targetRecipients, !recipients.isEmpty else { return true }
+        return recipients.contains(myDeviceID)
     }
     
     /// Reload circle members for the active circle (for recipient picker).
@@ -652,7 +682,11 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         timelineVM = vm
         do {
             try vm.reload()
-            timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
+            let myDeviceID = state.identity.deviceID
+            timelineEntries = vm.entries.filter {
+                $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
+                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
+            }
         } catch {
             print("Reload failed: \(error)")
             return
@@ -660,17 +694,21 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
         // Collect reactions keyed by target CID
         let myCallsign = state.identity.callsign
+        let myDeviceID = state.identity.deviceID
         let reactionsByCID = aggregateReactions(from: vm.entries)
         reactionsByPostCID = reactionsByCID
         commentsByPostCID = aggregateComments(from: vm.entries, myCallsign: myCallsign)
 
         // Also attach reactions to timeline posts
         timelineEntries = vm.entries
-            .filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
+            .filter {
+                $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
+                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
+            }
 
-        // Filter to message-type entries and decode
+        // Filter to message-type entries visible to me and decode
         chatMessages = vm.entries
-            .filter { $0.artifactType == "message" }
+            .filter { $0.artifactType == "message" && isVisibleToMe(entry: $0, myDeviceID: myDeviceID) }
             .compactMap { entry -> ChatMessage? in
                 guard let data = entry.plaintextData,
                       let payload = try? JSONDecoder().decode(ChatPayload.self, from: data) else {
@@ -789,6 +827,51 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     var activeConversationMessages: [ChatMessage] {
         guard let convID = activeConversationID else { return chatMessages }
         return chatMessages.filter { $0.conversationID == convID }
+    }
+
+    /// Delete a conversation: purges all its message artifacts locally and sends burn notices.
+    func deleteConversation(_ conversation: Conversation) {
+        guard let state = appState,
+              let circleID = state.activeCircleID else { return }
+
+        let peerDeviceID: String?
+        switch conversation.type {
+        case .circle:
+            peerDeviceID = nil
+        case .dm(let deviceID, _):
+            peerDeviceID = deviceID
+        }
+
+        do {
+            let purgedCIDs = try state.ledger.purgeConversation(
+                circleID: circleID,
+                peerDeviceID: peerDeviceID,
+                myDeviceID: state.identity.deviceID
+            )
+
+            // Send burn notices to peers (best-effort)
+            if let node = networkService?.meshNode {
+                for cid in purgedCIDs {
+                    let notice = GhostMessage.burnNotice(
+                        GhostMessage.BurnNoticePayload(
+                            cid: cid,
+                            circleID: circleID,
+                            originDeviceID: state.identity.deviceID
+                        )
+                    )
+                    node.ghostNode.broadcastMessage(notice)
+                }
+            }
+
+            // Clear from local state
+            chatMessages.removeAll { $0.conversationID == conversation.id }
+            conversations.removeAll { $0.id == conversation.id }
+            if activeConversationID == conversation.id {
+                activeConversationID = nil
+            }
+        } catch {
+            print("Delete conversation failed: \(error)")
+        }
     }
 
     // MARK: - Reactions

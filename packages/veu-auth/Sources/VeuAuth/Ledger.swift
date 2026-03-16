@@ -407,6 +407,67 @@ public final class Ledger {
         }
     }
 
+    /// Purge all artifacts belonging to a conversation and return their CIDs.
+    ///
+    /// - For DMs (`peerDeviceID != nil`): purges message artifacts exchanged between
+    ///   `myDeviceID` and `peerDeviceID`.
+    /// - For circle chat (`peerDeviceID == nil`): purges broadcast message artifacts
+    ///   (those with `target_recipients IS NULL`).
+    ///
+    /// - Returns: CIDs of purged artifacts (for burn notice propagation).
+    public func purgeConversation(circleID: String, peerDeviceID: String?, myDeviceID: String) throws -> [String] {
+        let selectSQL: String
+        let isDM = peerDeviceID != nil
+
+        if isDM {
+            selectSQL = """
+                SELECT cid FROM artifacts
+                WHERE circle_id = ? AND artifact_type = 'message' AND sync_state != 'purged'
+                AND (
+                    (sender_id = ? AND target_recipients LIKE ?)
+                    OR
+                    (sender_id = ? AND target_recipients LIKE ?)
+                )
+                """
+        } else {
+            selectSQL = """
+                SELECT cid FROM artifacts
+                WHERE circle_id = ? AND artifact_type = 'message' AND sync_state != 'purged'
+                AND target_recipients IS NULL
+                """
+        }
+
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, selectSQL, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+
+        if let peerDeviceID = peerDeviceID {
+            // (sender_id = peerDeviceID AND target_recipients LIKE '%myDeviceID%')
+            sqlite3_bind_text(stmt, 2, (peerDeviceID as NSString).utf8String, -1, nil)
+            let myPattern = "%\(myDeviceID)%"
+            sqlite3_bind_text(stmt, 3, (myPattern as NSString).utf8String, -1, nil)
+            // (sender_id = myDeviceID AND target_recipients LIKE '%peerDeviceID%')
+            sqlite3_bind_text(stmt, 4, (myDeviceID as NSString).utf8String, -1, nil)
+            let peerPattern = "%\(peerDeviceID)%"
+            sqlite3_bind_text(stmt, 5, (peerPattern as NSString).utf8String, -1, nil)
+        }
+
+        var cids: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            cids.append(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+
+        for cid in cids {
+            try purgeArtifact(cid: cid)
+        }
+
+        return cids
+    }
+
     /// Mark an artifact as synced.
     ///
     /// - Parameter cid: The CID of the artifact to mark.

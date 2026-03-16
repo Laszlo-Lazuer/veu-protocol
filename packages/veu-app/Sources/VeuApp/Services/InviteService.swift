@@ -28,6 +28,7 @@ public enum InvitePhase: Equatable {
 struct InviteOfferPayload: Codable {
     let publicKey: String   // base64 X25519 public key
     let circleID: String
+    let hasExistingKey: Bool?  // true when inviter is adding to existing circle
 }
 
 // MARK: - InviteService
@@ -49,17 +50,24 @@ public final class InviteService: ObservableObject {
     /// The peer's X25519 public key data, available after key exchange.
     public var peerPublicKeyData: Data? { handshakeSession?.peerPublicKeyData }
 
-    /// The derived circle key, available after `.confirmed`.
-    public var circleKey: CircleKey? { handshakeSession?.circleKey }
+    /// The circle key to use after confirmation.
+    /// Returns the transferred existing key (multi-member) or the ECDH-derived key (new circle).
+    public var circleKey: CircleKey? { transferredCircleKey ?? handshakeSession?.circleKey }
+
+    /// When set by the coordinator, the inviter will transfer this existing key
+    /// to the invitee instead of both using the ECDH-derived key.
+    public var existingCircleKey: CircleKey?
 
     // MARK: Private State
 
     private var handshakeSession: HandshakeSession?
+    private var transferredCircleKey: CircleKey?
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var token: String?
     private let relayURL: URL
     private var localKeypairForInvitee: EphemeralKeypair?
+    private var expectingKeyTransfer = false
 
     // MARK: Init
 
@@ -91,7 +99,8 @@ public final class InviteService: ObservableObject {
         // 2. Build invite payload (public keys + circleID)
         let offer = InviteOfferPayload(
             publicKey: publicKeyData.base64EncodedString(),
-            circleID: circleID
+            circleID: circleID,
+            hasExistingKey: existingCircleKey != nil ? true : nil
         )
         let payloadData = try JSONEncoder().encode(offer)
         let payloadString = payloadData.base64EncodedString()
@@ -162,6 +171,9 @@ public final class InviteService: ObservableObject {
     /// Reset all state to idle.
     public func reset() {
         handshakeSession = nil
+        transferredCircleKey = nil
+        existingCircleKey = nil
+        expectingKeyTransfer = false
         disconnect()
         token = nil
         circleID = nil
@@ -280,6 +292,7 @@ public final class InviteService: ObservableObject {
             }
 
             self.circleID = offer.circleID
+            self.expectingKeyTransfer = offer.hasExistingKey == true
 
             // Create handshake session for invitee and perform key exchange
             let session = HandshakeSession(circleID: offer.circleID)
@@ -308,7 +321,14 @@ public final class InviteService: ObservableObject {
     }
 
     /// Inviter receives invitee's public key via artifact on rendezvous topic.
+    /// Also handles key-transfer notifications on the invitee side.
     private func handleArtifactNotify(_ notify: RelayMessage.ArtifactNotifyPayload) {
+        // Key transfer: invitee receives existing circle key from inviter
+        if notify.cid.hasPrefix("key-transfer:"), case .verifying = phase {
+            decryptKeyTransfer(payload: notify.payload)
+            return
+        }
+
         guard case .waitingForClaim = phase else { return }
 
         guard let remotePublicKeyData = Data(base64Encoded: notify.payload) else {
@@ -326,8 +346,59 @@ public final class InviteService: ObservableObject {
             self.shortCode = handshakeSession?.shortCode
             self.auraColorHex = handshakeSession?.auraColorHex
             phase = .verifying
+
+            // After ECDH, transfer existing circle key if adding to existing circle
+            if let existingKey = existingCircleKey,
+               let ecdhKey = handshakeSession?.circleKey {
+                Task { [weak self] in
+                    try await self?.pushKeyTransfer(existingKey: existingKey, ecdhKey: ecdhKey)
+                }
+            }
         } catch {
             phase = .failed("Key exchange failed: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Key Transfer (Multi-Member Circles)
+
+    /// Encrypt the existing circle key with the ECDH-derived key and push to relay.
+    private func pushKeyTransfer(existingKey: CircleKey, ecdhKey: CircleKey) async throws {
+        guard let token = token else { return }
+        let topicHash = GlobalTransport.inviteTopicHash(token: token)
+
+        // Serialize: keyData (32 bytes) + glazeSalt (16 bytes)
+        let plaintext = existingKey.keyData + existingKey.glazeSalt
+
+        // Encrypt with AES-GCM using the ECDH-derived key
+        let sealedBox = try AES.GCM.seal(plaintext, using: ecdhKey.symmetricKey)
+        guard let combined = sealedBox.combined else { return }
+
+        let artifact = RelayMessage.artifactPush(
+            RelayMessage.ArtifactPushPayload(
+                cid: "key-transfer:\(UUID().uuidString)",
+                topic: topicHash,
+                payload: combined.base64EncodedString(),
+                persist: false
+            )
+        )
+        try await sendRelayMessage(artifact)
+    }
+
+    /// Decrypt a key-transfer artifact and store the transferred circle key.
+    private func decryptKeyTransfer(payload: String) {
+        guard let ecdhKey = handshakeSession?.circleKey,
+              let encryptedData = Data(base64Encoded: payload) else { return }
+
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: encryptedData)
+            let plaintext = try AES.GCM.open(sealedBox, using: ecdhKey.symmetricKey)
+
+            guard plaintext.count == 48 else { return } // 32 key + 16 salt
+            let keyData = Data(plaintext.prefix(32))
+            let glazeSalt = Data(plaintext.suffix(16))
+            self.transferredCircleKey = CircleKey(keyData: keyData, glazeSalt: glazeSalt)
+        } catch {
+            print("[InviteService] Key transfer decrypt failed: \(error)")
         }
     }
 

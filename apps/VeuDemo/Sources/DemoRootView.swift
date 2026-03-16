@@ -429,6 +429,8 @@ struct HandshakeTab: View {
         }
     }
 
+    @State private var showCirclePicker = false
+
     // MARK: - Remote Invite UI
 
     @ViewBuilder
@@ -444,14 +446,40 @@ struct HandshakeTab: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                Button {
-                    coordinator.generateInvite()
-                } label: {
-                    Label("Invite to Circle", systemImage: "paperplane.fill")
-                        .frame(maxWidth: .infinity)
+                let circleCount = appState.circleKeys.count
+                if circleCount > 0 {
+                    Button {
+                        showCirclePicker = true
+                    } label: {
+                        Label("Invite to Circle", systemImage: "paperplane.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .confirmationDialog("Choose Circle", isPresented: $showCirclePicker) {
+                        Button("New Circle") {
+                            coordinator.inviteExistingCircleID = nil
+                            coordinator.generateInvite()
+                        }
+                        ForEach(Array(appState.circleKeys.keys), id: \.self) { id in
+                            Button("Add to \(coordinator.circleAliases[id] ?? String(id.prefix(8)))") {
+                                coordinator.inviteExistingCircleID = id
+                                coordinator.generateInvite()
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    }
+                } else {
+                    Button {
+                        coordinator.inviteExistingCircleID = nil
+                        coordinator.generateInvite()
+                    } label: {
+                        Label("Invite to Circle", systemImage: "paperplane.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
             }
 
         case .depositing, .claiming:
@@ -890,6 +918,7 @@ struct ConversationListView: View {
     let appState: AppState
     @ObservedObject var coordinator: AppCoordinator
     @Binding var showNewDMPicker: Bool
+    @State private var conversationToDelete: Conversation?
 
     var body: some View {
         List {
@@ -907,6 +936,13 @@ struct ConversationListView: View {
                     ConversationRow(conversation: conv)
                 }
                 .buttonStyle(.plain)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        conversationToDelete = conv
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
             }
 
             if coordinator.conversations.count <= 1 {
@@ -928,6 +964,22 @@ struct ConversationListView: View {
             }
         }
         .listStyle(.plain)
+        .alert("Delete Conversation", isPresented: Binding(
+            get: { conversationToDelete != nil },
+            set: { if !$0 { conversationToDelete = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { conversationToDelete = nil }
+            Button("Delete", role: .destructive) {
+                if let conv = conversationToDelete {
+                    coordinator.deleteConversation(conv)
+                }
+                conversationToDelete = nil
+            }
+        } message: {
+            if let conv = conversationToDelete {
+                Text("Delete all messages in \"\(conv.displayName)\"? This cannot be undone.")
+            }
+        }
     }
 }
 
@@ -2573,7 +2625,14 @@ struct CaptureSheet: View {
     private func sealContent() {
         let caption = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let burnEpoch = Int(Date().timeIntervalSince1970) + Int(burnHours * 3600)
-        let targets: [String]? = selectedRecipients.isEmpty ? nil : Array(selectedRecipients)
+        // Snapshot model: "Everyone" resolves to current member device IDs
+        let targets: [String]?
+        if selectedRecipients.isEmpty {
+            let allMembers = coordinator.circleMembers.map(\.id)
+            targets = allMembers.count > 1 ? allMembers : nil
+        } else {
+            targets = Array(selectedRecipients)
+        }
 
         // Text-only message — no processing needed
         guard let imageData = capturedData else {
