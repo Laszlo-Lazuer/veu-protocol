@@ -342,8 +342,20 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
     /// Generate a single-use invite link for the active circle.
     func generateInvite() {
-        guard let state = appState,
-              let circleID = state.activeCircleID else { return }
+        guard let state = appState else { return }
+
+        // Auto-create a circle if none exists yet (enables remote-only onboarding)
+        var circleID = state.activeCircleID
+        if circleID == nil {
+            do {
+                circleID = try state.createCircle()
+                print("[AppCoordinator] Auto-created circle \(circleID!.prefix(8))… for invite")
+            } catch {
+                invitePhase = .failed(error.localizedDescription)
+                return
+            }
+        }
+        guard let circleID else { return }
 
         let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
         let service = InviteService(relayURL: relay)

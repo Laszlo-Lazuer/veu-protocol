@@ -173,6 +173,17 @@ public final class AppState {
 
     // MARK: - Circle Management
 
+    /// Create a brand-new circle with a random key and set it active.
+    /// Returns the generated circle ID.
+    @discardableResult
+    public func createCircle() throws -> String {
+        let circleID = UUID().uuidString
+        let key = CircleKey.generate()
+        try addCircle(circleID: circleID, circleKey: key)
+        try setActiveCircle(circleID)
+        return circleID
+    }
+
     /// Register a new circle after a successful handshake.
     public func addCircle(circleID: String, circleKey: CircleKey) throws {
         // Store encrypted circle name (use circle ID as placeholder name)

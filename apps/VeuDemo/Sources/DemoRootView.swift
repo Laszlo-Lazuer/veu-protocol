@@ -349,7 +349,6 @@ struct HandshakeTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
-                .disabled(appState.activeCircleID == nil)
             }
 
         case .depositing, .claiming:
