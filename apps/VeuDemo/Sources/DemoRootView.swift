@@ -13,7 +13,7 @@ struct DemoRootView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            IdentityTab(appState: appState)
+            IdentityTab(appState: appState, coordinator: coordinator)
                 .tabItem {
                     Label("Identity", systemImage: "person.circle.fill")
                 }
@@ -76,8 +76,12 @@ struct DemoRootView: View {
 
 struct IdentityTab: View {
     let appState: AppState
+    @ObservedObject var coordinator: AppCoordinator
     @State private var circleToDelete: String?
     @State private var showDeleteConfirm = false
+    @State private var editingCircleAlias: String?
+    @State private var editingMemberAlias: String?
+    @State private var aliasText = ""
 
     var body: some View {
         NavigationStack {
@@ -112,8 +116,19 @@ struct IdentityTab: View {
                                 Image(systemName: "circle.fill")
                                     .foregroundColor(.green)
                                     .font(.caption)
-                                Text(String(id.prefix(8)) + "…")
-                                    .font(.system(.caption, design: .monospaced))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if let alias = coordinator.circleAliases[id] {
+                                        Text(alias)
+                                            .font(.system(.caption, design: .rounded))
+                                            .fontWeight(.medium)
+                                        Text(String(id.prefix(8)) + "…")
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    } else {
+                                        Text(String(id.prefix(8)) + "…")
+                                            .font(.system(.caption, design: .monospaced))
+                                    }
+                                }
                                 Spacer()
                                 if appState.activeCircleID == id {
                                     Text("Active")
@@ -126,6 +141,12 @@ struct IdentityTab: View {
                                 try? appState.setActiveCircle(id)
                             }
                             .contextMenu {
+                                Button {
+                                    aliasText = coordinator.circleAliases[id] ?? ""
+                                    editingCircleAlias = id
+                                } label: {
+                                    Label("Rename Circle", systemImage: "pencil")
+                                }
                                 if appState.activeCircleID != id {
                                     Button {
                                         try? appState.setActiveCircle(id)
@@ -138,6 +159,42 @@ struct IdentityTab: View {
                                     showDeleteConfirm = true
                                 } label: {
                                     Label("Delete Circle", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(12)
+                }
+
+                if !coordinator.circleMembers.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Contacts")
+                            .font(.headline)
+                        ForEach(coordinator.circleMembers) { member in
+                            HStack {
+                                Image(systemName: "person.fill")
+                                    .foregroundColor(.blue)
+                                    .font(.caption)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(member.displayName)
+                                        .font(.system(.caption, design: .rounded))
+                                        .fontWeight(.medium)
+                                    if member.localAlias != nil {
+                                        Text(member.callsign)
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .contextMenu {
+                                Button {
+                                    aliasText = member.localAlias ?? ""
+                                    editingMemberAlias = member.id
+                                } label: {
+                                    Label("Rename Contact", systemImage: "pencil")
                                 }
                             }
                         }
@@ -163,6 +220,52 @@ struct IdentityTab: View {
                 }
             } message: {
                 Text("This will permanently delete the circle, all its messages, and the shared encryption key. This cannot be undone.")
+            }
+            .alert("Rename Circle", isPresented: Binding(
+                get: { editingCircleAlias != nil },
+                set: { if !$0 { editingCircleAlias = nil } }
+            )) {
+                TextField("Circle name", text: $aliasText)
+                Button("Save") {
+                    if let id = editingCircleAlias {
+                        coordinator.setCircleAlias(id, alias: aliasText)
+                    }
+                    editingCircleAlias = nil
+                }
+                Button("Clear", role: .destructive) {
+                    if let id = editingCircleAlias {
+                        coordinator.setCircleAlias(id, alias: nil)
+                    }
+                    editingCircleAlias = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    editingCircleAlias = nil
+                }
+            } message: {
+                Text("Give this circle a friendly name.")
+            }
+            .alert("Rename Contact", isPresented: Binding(
+                get: { editingMemberAlias != nil },
+                set: { if !$0 { editingMemberAlias = nil } }
+            )) {
+                TextField("Contact name", text: $aliasText)
+                Button("Save") {
+                    if let id = editingMemberAlias {
+                        coordinator.setMemberAlias(id, alias: aliasText)
+                    }
+                    editingMemberAlias = nil
+                }
+                Button("Clear", role: .destructive) {
+                    if let id = editingMemberAlias {
+                        coordinator.setMemberAlias(id, alias: nil)
+                    }
+                    editingMemberAlias = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    editingMemberAlias = nil
+                }
+            } message: {
+                Text("Give this contact a friendly name. Only you will see it.")
             }
         }
     }
@@ -1009,7 +1112,7 @@ struct NewDMPickerView: View {
                     ForEach(otherMembers) { member in
                         Button {
                             // Create DM conversation if it doesn't exist yet
-                            coordinator.openOrCreateDM(peerDeviceID: member.id, peerCallsign: member.callsign)
+                            coordinator.openOrCreateDM(peerDeviceID: member.id, peerCallsign: member.displayName)
                             isPresented = false
                         } label: {
                             HStack(spacing: 12) {
@@ -1020,7 +1123,7 @@ struct NewDMPickerView: View {
                                     Image(systemName: "person.fill")
                                         .foregroundColor(.white)
                                 }
-                                Text(member.callsign)
+                                Text(member.displayName)
                                     .font(.system(size: 16, weight: .medium))
                                 Spacer()
                                 Image(systemName: "chevron.right")
@@ -2198,7 +2301,7 @@ struct CaptureSheet: View {
                         ForEach(Array(selectedRecipients), id: \.self) { deviceID in
                             if let member = coordinator.circleMembers.first(where: { $0.id == deviceID }) {
                                 HStack(spacing: 4) {
-                                    Text(member.callsign)
+                                    Text(member.displayName)
                                         .font(.caption.bold())
                                     Button {
                                         selectedRecipients.remove(deviceID)
@@ -2262,8 +2365,8 @@ struct CaptureSheet: View {
                                 }
                             } label: {
                                 HStack {
-                                    Text(member.callsign)
-                                        .font(.body.monospaced())
+                                    Text(member.displayName)
+                                        .font(.body)
                                     Spacer()
                                     if selectedRecipients.contains(member.id) {
                                         Image(systemName: "checkmark")
