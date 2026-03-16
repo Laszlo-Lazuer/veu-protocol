@@ -752,6 +752,17 @@ struct ChatTab: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .overlay(alignment: .top) {
+            if let toast = coordinator.voiceDebugToast {
+                Text(toast)
+                    .font(.caption)
+                    .padding(8)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 50)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.easeInOut, value: coordinator.voiceDebugToast)
+            }
+        }
     }
 
     private var conversationTitle: String {
@@ -1659,8 +1670,8 @@ struct DemoTimelineTab: View {
                     VStack(spacing: 0) {
                         Image(uiImage: uiImage)
                             .resizable()
-                            .scaledToFill()
-                            .frame(height: payload.caption != nil ? height - 48 : height)
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
                             .clipped()
                             .contentShape(Rectangle())
                             .onTapGesture { fullscreenImage = uiImage }
@@ -1678,7 +1689,8 @@ struct DemoTimelineTab: View {
                     // Raw image (legacy / no caption)
                     Image(uiImage: uiImage)
                         .resizable()
-                        .scaledToFill()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
                         .onTapGesture { fullscreenImage = uiImage }
                 } else if let data = entry.plaintextData,
