@@ -90,6 +90,7 @@ All configuration is via environment variables:
 |---|---|---|
 | `VEU_RELAY_PORT` | `8080` | HTTP listen port |
 | `VEU_RELAY_DB_PATH` | `./veu-relay.db` | Path to the SQLite database file |
+| `VEU_ADMIN_TOKEN` | *(none)* | Bearer token for admin API endpoints. If unset, admin routes are disabled. |
 | `VEU_APNS_KEY_PATH` | *(none)* | Path to APNs `.p8` key file |
 | `VEU_APNS_KEY_ID` | *(none)* | APNs key ID |
 | `VEU_APNS_TEAM_ID` | *(none)* | Apple Developer Team ID |
@@ -127,6 +128,41 @@ Clients communicate over WebSocket at `/ws?topic=<64-char-hex-topic-hash>`:
 
 // Relay → Client: new artifact broadcast
 {"type": "artifact_notify", "cid": "<cidv1>", "topic": "<hex>", "payload": "<base64>"}
+```
+
+## Admin API
+
+When `VEU_ADMIN_TOKEN` is set, the relay exposes authenticated admin endpoints for operational management. All requests require the header `Authorization: Bearer <token>`.
+
+### GET /admin/stats
+
+Returns current counts of stored artifacts, push tokens, and invites.
+
+```bash
+curl -H "Authorization: Bearer <token>" https://veu-relay.fly.dev/admin/stats
+# → {"artifacts": 12, "push_tokens": 3, "invites": 0}
+```
+
+### DELETE /admin/artifacts
+
+Purges stored artifacts. Use the optional `?topic=<hash>` query parameter to scope the purge to a single circle topic. Without it, **all** artifacts are deleted.
+
+```bash
+# Purge all artifacts
+curl -X DELETE -H "Authorization: Bearer <token>" \
+  https://veu-relay.fly.dev/admin/artifacts
+# → {"status": "ok", "deleted": 12}
+
+# Purge artifacts for a specific topic
+curl -X DELETE -H "Authorization: Bearer <token>" \
+  "https://veu-relay.fly.dev/admin/artifacts?topic=8a1cc580..."
+# → {"status": "ok", "deleted": 4}
+```
+
+### Setting the admin token on Fly.io
+
+```bash
+fly secrets set VEU_ADMIN_TOKEN="$(openssl rand -hex 32)" -a veu-relay
 ```
 
 ## Security Considerations

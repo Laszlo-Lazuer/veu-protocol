@@ -75,6 +75,7 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var isInVoiceRoom = false
     @Published var activeVoiceRoomID: String?
     @Published var voiceRoomParticipants: [String] = []
+    @Published var voiceDebugToast: String?
 
     private var voiceCallManager: VoiceCallManager?
 
@@ -342,8 +343,20 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
     /// Generate a single-use invite link for the active circle.
     func generateInvite() {
-        guard let state = appState,
-              let circleID = state.activeCircleID else { return }
+        guard let state = appState else { return }
+
+        // Auto-create a circle if none exists yet (enables remote-only onboarding)
+        var circleID = state.activeCircleID
+        if circleID == nil {
+            do {
+                circleID = try state.createCircle()
+                print("[AppCoordinator] Auto-created circle \(circleID!.prefix(8))… for invite")
+            } catch {
+                invitePhase = .failed(error.localizedDescription)
+                return
+            }
+        }
+        guard let circleID else { return }
 
         let relay = RelayDefaults.effectiveRelayURL(from: relayURL) ?? RelayDefaults.defaultRelayURL
         let service = InviteService(relayURL: relay)
@@ -417,6 +430,14 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
             guard let circleID = service.circleID else { return }
             print("[AppCoordinator] Invite confirmed, circleID=\(circleID.prefix(8))…")
+
+            // Register the circle and its key in AppState (persists to Keychain + Ledger)
+            if let key = service.circleKey {
+                try state.addCircle(circleID: circleID, circleKey: key)
+                try state.setActiveCircle(circleID)
+                let keyHash = key.keyData.prefix(8).map { String(format: "%02x", $0) }.joined()
+                print("[AppCoordinator] Invite circle registered, keyHash=\(keyHash)…")
+            }
 
             // Register self as circle member
             try state.ledger.insertCircleMember(
@@ -1140,6 +1161,15 @@ extension AppCoordinator: ProximitySessionDelegate {
     /// Handle an incoming voice signal from the Ghost Network.
     func handleVoiceSignal(_ payload: GhostMessage.VoiceCallPayload) {
         if voiceCallManager == nil { setupVoiceCallManager() }
+
+        // Debug toast so testers can see voice signals arriving
+        if payload.action != .audioFrame {
+            let tag = payload.senderDeviceID == voiceCallManager?.deviceID ? "SELF-ECHO" : "INCOMING"
+            voiceDebugToast = "🔔 [\(tag)] \(payload.action) from \(String(payload.senderDeviceID.prefix(8)))…"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                self?.voiceDebugToast = nil
+            }
+        }
 
         // Audio frames need decryption before passing to VoiceCallManager
         if payload.action == .audioFrame, let encryptedData = payload.audioFrameData {

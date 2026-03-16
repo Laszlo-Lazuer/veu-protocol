@@ -349,7 +349,6 @@ struct HandshakeTab: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
-                .disabled(appState.activeCircleID == nil)
             }
 
         case .depositing, .claiming:
@@ -751,6 +750,17 @@ struct ChatTab: View {
             if coordinator.showIncomingCall {
                 IncomingCallSheet(coordinator: coordinator)
                     .transition(.move(edge: .bottom))
+            }
+        }
+        .overlay(alignment: .top) {
+            if let toast = coordinator.voiceDebugToast {
+                Text(toast)
+                    .font(.caption)
+                    .padding(8)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 50)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.easeInOut, value: coordinator.voiceDebugToast)
             }
         }
     }
@@ -1660,8 +1670,8 @@ struct DemoTimelineTab: View {
                     VStack(spacing: 0) {
                         Image(uiImage: uiImage)
                             .resizable()
-                            .scaledToFill()
-                            .frame(height: payload.caption != nil ? height - 48 : height)
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
                             .clipped()
                             .contentShape(Rectangle())
                             .onTapGesture { fullscreenImage = uiImage }
@@ -1679,7 +1689,8 @@ struct DemoTimelineTab: View {
                     // Raw image (legacy / no caption)
                     Image(uiImage: uiImage)
                         .resizable()
-                        .scaledToFill()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
                         .onTapGesture { fullscreenImage = uiImage }
                 } else if let data = entry.plaintextData,
@@ -2292,8 +2303,9 @@ struct CaptureSheet: View {
 
         let circleKey = try state.activeCircleKey()
         let captionValue = caption.isEmpty ? nil : caption
-        let qualityCandidates: [CGFloat] = [0.72, 0.64, 0.56, 0.48, 0.40, 0.32, 0.26, 0.22, 0.18, 0.14, 0.10]
+        let qualityCandidates: [CGFloat] = [0.60, 0.50, 0.42, 0.36, 0.30, 0.24, 0.18, 0.14, 0.10]
         let sizeCandidates = dimensionCandidates(for: image)
+        let rawTargetBytes = 300 * 1024  // ~300 KB raw JPEG target
 
         var bestCandidate: (data: Data, packageSize: Int)?
 
@@ -2303,6 +2315,12 @@ struct CaptureSheet: View {
             for quality in qualityCandidates {
                 guard let jpegData = preparedImage.jpegData(compressionQuality: quality) else { continue }
                 let candidate = stripMetadata(from: jpegData) ?? jpegData
+
+                // Fast exit: if raw JPEG is already under target, use it
+                if candidate.count <= rawTargetBytes {
+                    return candidate
+                }
+
                 let postData = try encodePostPayload(imageData: candidate, caption: captionValue)
                 let packageSize = try RelayPostBudget.encodedPackageSize(
                     forPostData: postData,
@@ -2323,10 +2341,9 @@ struct CaptureSheet: View {
             }
         }
 
-        // Always return the best candidate — local/mesh have no size limit and
-        // the relay hard limit (5 MB payload) is well above the 2 MB target.
+        // Always return the best candidate — local/mesh have no size limit.
         if let best = bestCandidate {
-            print("[Compress] Best candidate \(formatBytes(best.packageSize)) exceeds 2 MB relay target; using anyway")
+            print("[Compress] Best candidate \(formatBytes(best.packageSize)) exceeds 300 KB target; using anyway")
             return best.data
         }
 
@@ -2335,8 +2352,8 @@ struct CaptureSheet: View {
 
     private func dimensionCandidates(for image: UIImage) -> [CGFloat] {
         let originalLongestEdge = max(image.size.width, image.size.height)
-        let candidates: [CGFloat] = [1080, 960, 840, 720, 600, 540, 480]
-        return candidates.filter { $0 < originalLongestEdge } + [min(originalLongestEdge, 1080)]
+        let candidates: [CGFloat] = [720, 600, 540, 480, 360]
+        return candidates.filter { $0 < originalLongestEdge } + [min(originalLongestEdge, 720)]
             .reduce(into: [CGFloat]()) { result, value in
                 if !result.contains(value) {
                     result.append(value)

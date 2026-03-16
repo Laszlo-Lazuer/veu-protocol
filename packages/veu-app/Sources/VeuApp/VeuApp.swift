@@ -29,7 +29,7 @@ import SwiftUI
 /// ```
 public enum VeuAppKit {
     /// Library version.
-    public static let version = "0.5.0"
+    public static let version = "1.1.0"
 
     /// Create a bootstrapped AppState with a fresh identity and in-memory ledger.
     public static func bootstrap() throws -> AppState {
@@ -39,7 +39,7 @@ public enum VeuAppKit {
 #else
 // Non-SwiftUI platforms: library-only.
 public enum VeuAppKit {
-    public static let version = "0.5.0"
+    public static let version = "1.1.0"
 
     public static func bootstrap() throws -> AppState {
         try AppState.bootstrap()
