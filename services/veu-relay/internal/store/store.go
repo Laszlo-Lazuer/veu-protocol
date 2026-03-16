@@ -203,6 +203,32 @@ func (s *Store) GetPushTokens(ctx context.Context, topicHash string) ([]PushToke
 	return tokens, rows.Err()
 }
 
+// PurgeAllArtifacts deletes all artifacts. Returns the number of rows deleted.
+func (s *Store) PurgeAllArtifacts(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM artifacts`)
+	if err != nil {
+		return 0, fmt.Errorf("purge artifacts: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// PurgeArtifactsByTopic deletes all artifacts for a given topic hash. Returns the number of rows deleted.
+func (s *Store) PurgeArtifactsByTopic(ctx context.Context, topicHash string) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM artifacts WHERE topic_hash = ?`, topicHash)
+	if err != nil {
+		return 0, fmt.Errorf("purge artifacts by topic: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// Stats returns counts of artifacts, push tokens, and invites.
+func (s *Store) Stats(ctx context.Context) (artifacts, pushTokens, invites int64, err error) {
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM artifacts`).Scan(&artifacts)
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM push_tokens`).Scan(&pushTokens)
+	s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM invites`).Scan(&invites)
+	return
+}
+
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()

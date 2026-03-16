@@ -64,7 +64,11 @@ func main() {
 	hub.StartPruner(ctx, 5*time.Minute)
 
 	// Set up HTTP routes.
-	mux := api.NewRouter(hub)
+	adminToken := os.Getenv("VEU_ADMIN_TOKEN")
+	if adminToken != "" {
+		slog.Info("admin endpoints enabled")
+	}
+	mux := api.NewRouter(hub, st, adminToken)
 	addr := ":" + port
 
 	srv := &http.Server{
