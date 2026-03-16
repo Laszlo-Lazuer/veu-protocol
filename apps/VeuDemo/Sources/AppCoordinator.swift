@@ -543,10 +543,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         timelineVM = vm
         do {
             try vm.reload()
-            let myDeviceID = state.identity.deviceID
             timelineEntries = vm.entries.filter {
                 $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
-                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
             }
             reloadChat()
             reloadCircleMembers()
@@ -682,10 +680,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         timelineVM = vm
         do {
             try vm.reload()
-            let myDeviceID = state.identity.deviceID
             timelineEntries = vm.entries.filter {
                 $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
-                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
             }
         } catch {
             print("Reload failed: \(error)")
@@ -703,7 +699,6 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         timelineEntries = vm.entries
             .filter {
                 $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment"
-                    && isVisibleToMe(entry: $0, myDeviceID: myDeviceID)
             }
 
         // Filter to message-type entries visible to me and decode
