@@ -554,10 +554,12 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     }
 
     /// Check if a timeline entry is visible to the current user based on recipient targeting.
-    /// Returns true if targetRecipients is nil (legacy/broadcast) or myDeviceID is in the list.
+    /// Returns true if targetRecipients is nil (legacy/broadcast), myDeviceID is in the list, or I'm the sender.
     private func isVisibleToMe(entry: TimelineEntry, myDeviceID: String) -> Bool {
         guard let recipients = entry.targetRecipients, !recipients.isEmpty else { return true }
-        return recipients.contains(myDeviceID)
+        if recipients.contains(myDeviceID) { return true }
+        if entry.senderID == myDeviceID { return true }
+        return false
     }
     
     /// Reload circle members for the active circle (for recipient picker).
@@ -661,7 +663,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 recipientDeviceID: recipientDeviceID
             )
             let data = try JSONEncoder().encode(chatPayload)
-            let targets: [String]? = recipientDeviceID.map { [$0] }
+            // Include sender in targets so both sides pass visibility checks
+            let targets: [String]? = recipientDeviceID.map { [$0, state.identity.deviceID] }
             let result = try vm.compose(data: data, artifactType: "message", targetRecipients: targets)
             trackRelayArtifact(cid: result.cid, kind: "message")
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
@@ -723,7 +726,15 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 let convID: String
                 if let recipient = payload.recipientDeviceID {
                     // DM: conversation keyed by the *other* party's device ID
-                    convID = payload.sender == myCallsign ? recipient : (entry.senderID ?? payload.sender)
+                    if payload.sender == myCallsign {
+                        convID = recipient
+                    } else if let senderDevice = entry.senderID {
+                        convID = senderDevice
+                    } else {
+                        // Fallback: derive peer device ID from targetRecipients minus self
+                        let peerFromTargets = entry.targetRecipients?.first { $0 != myDeviceID }
+                        convID = peerFromTargets ?? payload.sender
+                    }
                 } else {
                     convID = state.activeCircleID ?? "unknown"
                 }
