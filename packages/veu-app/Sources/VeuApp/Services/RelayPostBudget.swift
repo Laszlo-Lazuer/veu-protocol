@@ -5,7 +5,7 @@ import VeuGhost
 import VeuMesh
 
 public enum RelayPostBudget {
-    public static let targetEncodedPackageBytes = 5 * 1024 * 1024
+    public static let targetEncodedPackageBytes = 500 * 1024
 
     public static func encodedPackageSize(
         forPostData postData: Data,
