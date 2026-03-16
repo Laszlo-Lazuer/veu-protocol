@@ -59,10 +59,17 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         public let id: String  // deviceID
         public let callsign: String
         public let publicKeyHex: String
+        public var localAlias: String?
+
+        /// Display name: alias if set, otherwise callsign.
+        public var displayName: String { localAlias ?? callsign }
     }
     
     /// Members of the active circle (for recipient picker).
     @Published var circleMembers: [CircleMember] = []
+
+    /// Local aliases for circles, keyed by circleID.
+    @Published var circleAliases: [String: String] = [:]
 
     // MARK: - Voice Call State
     @Published var showCallOverlay = false
@@ -111,6 +118,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
             let applyBootstrap = {
                 self.appState = state
                 self.reloadTimeline()
+                self.reloadCircleMembers()
+                self.loadCircleAliases()
                 if requestNotifications {
                     self.requestNotificationPermission()
                 }
@@ -537,13 +546,52 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 CircleMember(
                     id: member.deviceID,
                     callsign: member.callsign,
-                    publicKeyHex: member.publicKeyHex
+                    publicKeyHex: member.publicKeyHex,
+                    localAlias: member.localAlias
                 )
             }
         } catch {
             print("Reload members failed: \(error)")
             circleMembers = []
         }
+    }
+
+    /// Load all circle aliases from the ledger.
+    func loadCircleAliases() {
+        guard let state = appState else { return }
+        var aliases: [String: String] = [:]
+        for circleID in state.circleIDs {
+            if let alias = try? state.ledger.circleAlias(circleID: circleID) {
+                aliases[circleID] = alias
+            }
+        }
+        circleAliases = aliases
+    }
+
+    /// Set or clear a circle's local alias.
+    func setCircleAlias(_ circleID: String, alias: String?) {
+        guard let state = appState else { return }
+        try? state.ledger.setCircleAlias(circleID: circleID, alias: alias)
+        if let alias = alias, !alias.isEmpty {
+            circleAliases[circleID] = alias
+        } else {
+            circleAliases.removeValue(forKey: circleID)
+        }
+    }
+
+    /// Set or clear a contact's local alias within the active circle.
+    func setMemberAlias(_ deviceID: String, alias: String?) {
+        guard let state = appState, let circleID = state.activeCircleID else { return }
+        try? state.ledger.setMemberAlias(circleID: circleID, deviceID: deviceID, alias: alias)
+        reloadCircleMembers()
+    }
+
+    /// Resolve a display name for a device ID: alias → callsign → truncated ID.
+    func displayName(for deviceID: String) -> String {
+        if let member = circleMembers.first(where: { $0.id == deviceID }) {
+            return member.displayName
+        }
+        return String(deviceID.prefix(8))
     }
 
     func sealArtifact(data: Data, burnAfter: Int?, targetRecipients: [String]? = nil) {
@@ -666,12 +714,12 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     private func buildConversations(circleID: String, myCallsign: String) {
         var convMap: [String: Conversation] = [:]
 
-        // Build device ID → callsign lookup from circle members
+        // Build device ID → display name lookup (alias preferred over callsign)
         var callsignMap: [String: String] = [:]
         if let state = appState,
            let members = try? state.ledger.listCircleMembers(circleID: circleID) {
             for member in members {
-                callsignMap[member.deviceID] = member.callsign
+                callsignMap[member.deviceID] = member.localAlias ?? member.callsign
             }
         }
         // Also extract callsigns from peer messages (covers reinstall when circle_members is sparse)

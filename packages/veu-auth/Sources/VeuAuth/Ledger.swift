@@ -68,6 +68,7 @@ public final class Ledger {
         try execute(schema)
         try migrateArtifactTypes()
         try migrateAddReceivedVia()
+        try migrateAddLocalAliases()
     }
 
     /// Migrate existing databases whose artifacts CHECK constraint is missing
@@ -134,6 +135,26 @@ public final class Ledger {
         try execute("ALTER TABLE artifacts ADD COLUMN received_via TEXT")
     }
 
+    private func migrateAddLocalAliases() throws {
+        let circleCols: [String] = try query(
+            "PRAGMA table_info(circles)"
+        ) { stmt in
+            String(cString: sqlite3_column_text(stmt, 1))
+        }
+        if !circleCols.contains("local_alias") {
+            try execute("ALTER TABLE circles ADD COLUMN local_alias TEXT")
+        }
+
+        let memberCols: [String] = try query(
+            "PRAGMA table_info(circle_members)"
+        ) { stmt in
+            String(cString: sqlite3_column_text(stmt, 1))
+        }
+        if !memberCols.contains("local_alias") {
+            try execute("ALTER TABLE circle_members ADD COLUMN local_alias TEXT")
+        }
+    }
+
     // MARK: - Circle Operations
 
     /// Insert a new Circle into the ledger.
@@ -169,6 +190,62 @@ public final class Ledger {
         }
     }
 
+    /// Get the local alias for a circle, if set.
+    public func circleAlias(circleID: String) throws -> String? {
+        let sql = "SELECT local_alias FROM circles WHERE circle_id = ?"
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
+        return String(cString: sqlite3_column_text(stmt, 0))
+    }
+
+    /// Set or clear the local alias for a circle.
+    public func setCircleAlias(circleID: String, alias: String?) throws {
+        let sql = "UPDATE circles SET local_alias = ? WHERE circle_id = ?"
+        try executeWithBindings(sql) { stmt in
+            if let alias = alias, !alias.isEmpty {
+                sqlite3_bind_text(stmt, 1, (alias as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 1)
+            }
+            sqlite3_bind_text(stmt, 2, (circleID as NSString).utf8String, -1, nil)
+        }
+    }
+
+    /// Get the local alias for a circle member, if set.
+    public func memberAlias(circleID: String, deviceID: String) throws -> String? {
+        let sql = "SELECT local_alias FROM circle_members WHERE circle_id = ? AND device_id = ?"
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (deviceID as NSString).utf8String, -1, nil)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard sqlite3_column_type(stmt, 0) != SQLITE_NULL else { return nil }
+        return String(cString: sqlite3_column_text(stmt, 0))
+    }
+
+    /// Set or clear the local alias for a circle member.
+    public func setMemberAlias(circleID: String, deviceID: String, alias: String?) throws {
+        let sql = "UPDATE circle_members SET local_alias = ? WHERE circle_id = ? AND device_id = ?"
+        try executeWithBindings(sql) { stmt in
+            if let alias = alias, !alias.isEmpty {
+                sqlite3_bind_text(stmt, 1, (alias as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(stmt, 1)
+            }
+            sqlite3_bind_text(stmt, 2, (circleID as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(stmt, 3, (deviceID as NSString).utf8String, -1, nil)
+        }
+    }
+
     // MARK: - Circle Member Operations
 
     /// Insert a member into a circle.
@@ -191,8 +268,8 @@ public final class Ledger {
     }
 
     /// List all members of a circle.
-    public func listCircleMembers(circleID: String) throws -> [(deviceID: String, publicKeyHex: String, callsign: String)] {
-        let sql = "SELECT device_id, public_key_hex, callsign FROM circle_members WHERE circle_id = ? ORDER BY joined_at"
+    public func listCircleMembers(circleID: String) throws -> [(deviceID: String, publicKeyHex: String, callsign: String, localAlias: String?)] {
+        let sql = "SELECT device_id, public_key_hex, callsign, local_alias FROM circle_members WHERE circle_id = ? ORDER BY joined_at"
         var stmtPtr: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
             throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
@@ -201,12 +278,13 @@ public final class Ledger {
 
         sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
 
-        var results: [(deviceID: String, publicKeyHex: String, callsign: String)] = []
+        var results: [(deviceID: String, publicKeyHex: String, callsign: String, localAlias: String?)] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let deviceID = String(cString: sqlite3_column_text(stmt, 0))
             let publicKeyHex = String(cString: sqlite3_column_text(stmt, 1))
             let callsign = String(cString: sqlite3_column_text(stmt, 2))
-            results.append((deviceID: deviceID, publicKeyHex: publicKeyHex, callsign: callsign))
+            let localAlias: String? = sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : String(cString: sqlite3_column_text(stmt, 3))
+            results.append((deviceID: deviceID, publicKeyHex: publicKeyHex, callsign: callsign, localAlias: localAlias))
         }
         return results
     }
