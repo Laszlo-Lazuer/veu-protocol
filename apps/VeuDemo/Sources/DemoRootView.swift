@@ -985,6 +985,7 @@ struct ConversationRow: View {
             }
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 
     private var displayName: String {
