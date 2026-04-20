@@ -217,6 +217,69 @@ public final class HandshakeSession {
         zeroKeyMaterial()
     }
 
+    // MARK: - Snapshot Support
+
+    /// Export the current session state for persistence.
+    /// Only meaningful in `.initiating` or `.verifying` phase.
+    public func exportSnapshot() -> HandshakeSessionSnapshot? {
+        guard phase == .initiating || phase == .verifying else { return nil }
+        guard let localKeypair = localKeypair else { return nil }
+
+        return HandshakeSessionSnapshot(
+            circleID: circleID,
+            phase: phase == .initiating ? "initiating" : "verifying",
+            localPrivateKeyData: localKeypair.privateKey.rawRepresentation,
+            remotePublicKeyData: remotePublicKey?.rawRepresentation,
+            shortCode: shortCode,
+            auraColorHex: auraColorHex,
+            circleKeyData: circleKey?.keyData,
+            glazeSaltData: circleKey?.glazeSalt,
+            deadLinkURI: deadLink?.toURI(),
+            createdAt: createdAt,
+            timeout: timeout
+        )
+    }
+
+    /// Restore a session from a persisted snapshot.
+    /// Returns nil if the snapshot is expired or data is invalid.
+    public static func restore(from snapshot: HandshakeSessionSnapshot) -> HandshakeSession? {
+        // Check expiry
+        if Date().timeIntervalSince(snapshot.createdAt) > snapshot.timeout {
+            return nil
+        }
+
+        guard let privKey = try? Curve25519.KeyAgreement.PrivateKey(
+            rawRepresentation: snapshot.localPrivateKeyData
+        ) else { return nil }
+
+        let session = HandshakeSession(circleID: snapshot.circleID, timeout: snapshot.timeout)
+        // Manually set internal state (bypass state machine for restoration)
+        session.localKeypair = EphemeralKeypair(privateKey: privKey, publicKey: privKey.publicKey)
+
+        if let remotePKData = snapshot.remotePublicKeyData,
+           let remotePK = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: remotePKData) {
+            session.remotePublicKey = remotePK
+        }
+
+        session.shortCode = snapshot.shortCode
+        session.auraColorHex = snapshot.auraColorHex
+
+        if let keyData = snapshot.circleKeyData, let glazeSalt = snapshot.glazeSaltData {
+            session.circleKey = CircleKey(keyData: keyData, glazeSalt: glazeSalt)
+        }
+
+        switch snapshot.phase {
+        case "initiating":
+            session.phase = .initiating
+        case "verifying":
+            session.phase = .verifying
+        default:
+            return nil
+        }
+
+        return session
+    }
+
     // MARK: - Private Helpers
 
     private func deriveAndTransitionToVerifying() throws {
@@ -249,5 +312,54 @@ public final class HandshakeSession {
         self.localKeypair = nil
         self.signingKey = nil
         self.remotePublicKey = nil
+    }
+}
+
+// MARK: - Snapshot Model
+
+/// Persistable snapshot of a HandshakeSession's state.
+/// Stored device-local (not synced) for recovery after app background/crash.
+public struct HandshakeSessionSnapshot: Codable, Sendable {
+    public let circleID: String
+    public let phase: String
+    public let localPrivateKeyData: Data
+    public let remotePublicKeyData: Data?
+    public let shortCode: String?
+    public let auraColorHex: String?
+    public let circleKeyData: Data?
+    public let glazeSaltData: Data?
+    public let deadLinkURI: String?
+    public let createdAt: Date
+    public let timeout: TimeInterval
+
+    public init(
+        circleID: String,
+        phase: String,
+        localPrivateKeyData: Data,
+        remotePublicKeyData: Data? = nil,
+        shortCode: String? = nil,
+        auraColorHex: String? = nil,
+        circleKeyData: Data? = nil,
+        glazeSaltData: Data? = nil,
+        deadLinkURI: String? = nil,
+        createdAt: Date = Date(),
+        timeout: TimeInterval = 600
+    ) {
+        self.circleID = circleID
+        self.phase = phase
+        self.localPrivateKeyData = localPrivateKeyData
+        self.remotePublicKeyData = remotePublicKeyData
+        self.shortCode = shortCode
+        self.auraColorHex = auraColorHex
+        self.circleKeyData = circleKeyData
+        self.glazeSaltData = glazeSaltData
+        self.deadLinkURI = deadLinkURI
+        self.createdAt = createdAt
+        self.timeout = timeout
+    }
+
+    /// Whether this snapshot has expired.
+    public var isExpired: Bool {
+        Date().timeIntervalSince(createdAt) > timeout
     }
 }

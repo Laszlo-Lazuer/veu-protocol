@@ -126,6 +126,11 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 if autoStartNetwork, state.activeCircleID != nil {
                     self.startNetwork()
                 }
+                // Restore in-progress handshake if app was backgrounded during verification
+                if let restoredVM = HandshakeViewModel.restore(appState: state) {
+                    self.handshakeVM = restoredVM
+                    self.updateHandshakeState(from: restoredVM)
+                }
             }
 
             if Thread.isMainThread {
@@ -193,6 +198,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
             let session = ProximitySession()
             session.delegate = self
+            session.localIdentityPublicKeyHex = state.identity.publicKeyHex
+            session.localDeviceID = state.identity.deviceID
+            session.localCallsign = state.identity.callsign
             session.startAsInitiator(
                 deviceName: state.identity.callsign,
                 publicKey: link.publicKey.rawRepresentation,
@@ -212,6 +220,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
 
         let session = ProximitySession()
         session.delegate = self
+        session.localIdentityPublicKeyHex = state.identity.publicKeyHex
+        session.localDeviceID = state.identity.deviceID
+        session.localCallsign = state.identity.callsign
         // Responder doesn't have a public key yet — generate a temporary keypair
         // The actual handshake will happen when we receive the initiator's payload
         let tempKeypair = EphemeralKeypair.generate()
@@ -226,10 +237,19 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     }
 
     private var _responderKeypair: EphemeralKeypair?
+    /// Peer identity received during proximity handshake (used at confirm time).
+    private var _peerIdentity: (publicKeyHex: String, deviceID: String, callsign: String)?
 
     /// Handle received handshake payload from the proximity peer.
     func handleProximityHandshake(_ payload: ProximityHandshakePayload) {
         guard let state = appState else { return }
+
+        // Store peer identity if included in payload
+        if let peerPubKeyHex = payload.identityPublicKeyHex,
+           let peerDevID = payload.deviceID,
+           let peerCS = payload.callsign {
+            _peerIdentity = (publicKeyHex: peerPubKeyHex, deviceID: peerDevID, callsign: peerCS)
+        }
 
         if payload.role == "initiator" {
             // We are the responder — construct a Dead Link URI from the payload and respond
@@ -288,25 +308,34 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
             }
             
             // Add self as member
-            try state.ledger.insertCircleMember(
+            try state.addCircleMember(
                 circleID: circleID,
                 deviceID: state.identity.deviceID,
                 publicKeyHex: state.identity.publicKeyHex,
                 callsign: state.identity.callsign
             )
-            
-            // Add peer as member (derive callsign from their public key)
-            if let peerPubKeyData = vm.peerPublicKeyData {
+
+            // Add peer as member: prefer identity exchanged during proximity handshake,
+            // fall back to deriving from X25519 key (legacy/QR flow)
+            if let peerID = _peerIdentity {
+                try state.addCircleMember(
+                    circleID: circleID,
+                    deviceID: peerID.deviceID,
+                    publicKeyHex: peerID.publicKeyHex,
+                    callsign: peerID.callsign
+                )
+                _peerIdentity = nil
+            } else if let peerPubKeyData = vm.peerPublicKeyData {
                 let peerCallsign = Identity.deriveCallsign(from: peerPubKeyData)
                 let peerDeviceID = Identity.deriveDeviceID(from: peerPubKeyData)
-                try state.ledger.insertCircleMember(
+                try state.addCircleMember(
                     circleID: circleID,
                     deviceID: peerDeviceID,
                     publicKeyHex: peerPubKeyData.map { String(format: "%02x", $0) }.joined(),
                     callsign: peerCallsign
                 )
             }
-            
+
             reloadTimeline()
             reloadCircleMembers()
             
@@ -344,6 +373,7 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         proximityVerified = false
         discoveredPeerName = nil
         _responderKeypair = nil
+        _peerIdentity = nil
         proximitySession?.stop()
         proximitySession = nil
     }
@@ -449,18 +479,26 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
             }
 
             // Register self as circle member
-            try state.ledger.insertCircleMember(
+            try state.addCircleMember(
                 circleID: circleID,
                 deviceID: state.identity.deviceID,
                 publicKeyHex: state.identity.publicKeyHex,
                 callsign: state.identity.callsign
             )
 
-            // Register peer as circle member
-            if let peerPubKeyData = service.peerPublicKeyData {
+            // Register peer as circle member: prefer identity from proximity handshake
+            if let peerID = _peerIdentity {
+                try state.addCircleMember(
+                    circleID: circleID,
+                    deviceID: peerID.deviceID,
+                    publicKeyHex: peerID.publicKeyHex,
+                    callsign: peerID.callsign
+                )
+                _peerIdentity = nil
+            } else if let peerPubKeyData = service.peerPublicKeyData {
                 let peerCallsign = Identity.deriveCallsign(from: peerPubKeyData)
                 let peerDeviceID = Identity.deriveDeviceID(from: peerPubKeyData)
-                try state.ledger.insertCircleMember(
+                try state.addCircleMember(
                     circleID: circleID,
                     deviceID: peerDeviceID,
                     publicKeyHex: peerPubKeyData.map { String(format: "%02x", $0) }.joined(),
@@ -523,10 +561,12 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         let vm = TimelineViewModel(appState: state)
         timelineVM = vm
         do {
+            // Purge expired artifacts before loading
+            try vm.burnExpired()
             try vm.reload()
             timelineEntries = vm.entries.filter { $0.artifactType != "message" && $0.artifactType != "reaction" && $0.artifactType != "comment" }
-            reloadChat()
             reloadCircleMembers()
+            reloadChat()
         } catch {
             print("Reload failed: \(error)")
         }
@@ -542,7 +582,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         
         do {
             let members = try state.ledger.listCircleMembers(circleID: circleID)
-            circleMembers = members.map { member in
+            circleMembers = members
+                .filter { $0.deviceID != state.identity.deviceID }
+                .map { member in
                 CircleMember(
                     id: member.deviceID,
                     callsign: member.callsign,
@@ -568,10 +610,39 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
         circleAliases = aliases
     }
 
+    /// Switch the active circle: updates AppState, restarts network, reloads all data.
+    func switchCircle(to circleID: String) {
+        guard let state = appState else { return }
+        try? state.setActiveCircle(circleID)
+        reloadCircleMembers()
+        reloadTimeline()
+        conversations = []
+        chatMessages = []
+        activeConversationID = nil
+        if networkRunning {
+            startNetwork(forceRestart: true)
+        }
+    }
+
+    /// Delete a circle: stops network if active, removes from AppState.
+    func deleteCircle(_ circleID: String) {
+        guard let state = appState else { return }
+        let wasActive = state.activeCircleID == circleID
+        try? state.removeCircle(circleID)
+        if wasActive {
+            stopNetwork()
+            circleMembers = []
+            conversations = []
+            chatMessages = []
+            activeConversationID = nil
+            timelineVM = nil
+        }
+    }
+
     /// Set or clear a circle's local alias.
     func setCircleAlias(_ circleID: String, alias: String?) {
         guard let state = appState else { return }
-        try? state.ledger.setCircleAlias(circleID: circleID, alias: alias)
+        try? state.setCircleAlias(circleID: circleID, alias: alias)
         if let alias = alias, !alias.isEmpty {
             circleAliases[circleID] = alias
         } else {
@@ -582,8 +653,9 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     /// Set or clear a contact's local alias within the active circle.
     func setMemberAlias(_ deviceID: String, alias: String?) {
         guard let state = appState, let circleID = state.activeCircleID else { return }
-        try? state.ledger.setMemberAlias(circleID: circleID, deviceID: deviceID, alias: alias)
+        try? state.setMemberAlias(circleID: circleID, deviceID: deviceID, alias: alias)
         reloadCircleMembers()
+        reloadChat()
     }
 
     /// Resolve a display name for a device ID: alias → callsign → truncated ID.
@@ -687,19 +759,39 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                     )
                 }
                 // Determine conversation: DM uses peer device ID, circle chat uses circle ID
+                let myDeviceID = state.identity.deviceID
+                let isMe = entry.senderID == myDeviceID || payload.sender == myCallsign
                 let convID: String
                 if let recipient = payload.recipientDeviceID {
-                    // DM: conversation keyed by the *other* party's device ID
-                    convID = payload.sender == myCallsign ? recipient : (entry.senderID ?? payload.sender)
+                    if isMe {
+                        // Sent by me: conversation keyed by recipient
+                        convID = recipient
+                    } else if let sID = entry.senderID {
+                        // Received: conversation keyed by sender's device ID
+                        convID = sID
+                    } else {
+                        // Fallback: resolve callsign → device ID from circle members
+                        let resolved = self.circleMembers.first(where: { $0.callsign == payload.sender })?.id
+                        convID = resolved ?? payload.sender
+                    }
                 } else {
                     convID = state.activeCircleID ?? "unknown"
+                }
+                // Resolve display name: prefer local alias → callsign → raw sender
+                let senderName: String
+                if isMe {
+                    senderName = myCallsign
+                } else if let sID = entry.senderID {
+                    senderName = self.displayName(for: sID)
+                } else {
+                    senderName = payload.sender
                 }
                 return ChatMessage(
                     id: entry.cid,
                     text: payload.text,
-                    sender: payload.sender,
+                    sender: senderName,
                     timestamp: Date(timeIntervalSince1970: payload.timestamp),
-                    isMe: payload.sender == myCallsign,
+                    isMe: isMe,
                     conversationID: convID,
                     reactions: reactionsByCID[entry.cid] ?? [:]
                 )
@@ -745,8 +837,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                 if convID == circleID {
                     convType = .circle
                 } else {
-                    // DM — convID is the peer's device ID; look up callsign for display
-                    let peerCallsign = msg.isMe ? (callsignMap[convID] ?? convID) : msg.sender
+                    // DM — convID is the peer's device ID; always prefer alias from circle_members
+                    let peerCallsign = callsignMap[convID] ?? msg.sender
                     convType = .dm(peerDeviceID: convID, peerCallsign: peerCallsign)
                 }
                 convMap[convID] = Conversation(

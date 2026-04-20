@@ -93,22 +93,59 @@ public final class AppState {
             // Auto-recover circles from Keychain when Ledger is empty (e.g. app reinstall).
             // Keychain persists across delete/reinstall; the Ledger DB may be recreated fresh.
             let ledgerCircles = (try? ledger.listCircles()) ?? []
+            var recoveredCircles = false
             for circleID in state.circleKeys.keys where !ledgerCircles.contains(circleID) {
-                let placeholder = Data(circleID.utf8)
-                try? ledger.insertCircle(circleID: circleID, encryptedName: placeholder)
+                recoveredCircles = true
+                // Restore circle metadata (name + alias) from Keychain backup
+                let meta = keychain.loadCircleMeta(for: circleID)
+                let encName = meta?.encryptedName ?? Data(circleID.utf8)
+                try? ledger.insertCircle(circleID: circleID, encryptedName: encName)
+                if let alias = meta?.localAlias {
+                    try? ledger.setCircleAlias(circleID: circleID, alias: alias)
+                }
+                // Restore self as member
                 try? ledger.insertCircleMember(
                     circleID: circleID,
                     deviceID: identity.deviceID,
                     publicKeyHex: identity.publicKeyHex,
                     callsign: identity.callsign
                 )
+                // Restore peer members from Keychain backup
+                let peers = keychain.loadPeerMembers(for: circleID)
+                for peer in peers where peer.deviceID != identity.deviceID {
+                    try? ledger.insertCircleMember(
+                        circleID: circleID,
+                        deviceID: peer.deviceID,
+                        publicKeyHex: peer.publicKeyHex,
+                        callsign: peer.callsign
+                    )
+                    if let alias = peer.localAlias {
+                        try? ledger.setMemberAlias(circleID: circleID, deviceID: peer.deviceID, alias: alias)
+                    }
+                }
             }
-            
+
+            // Only rebuild members from artifacts when recovering from a reinstall
+            // (ledger was recreated). During normal boot, trust the handshake-established members.
+            if recoveredCircles {
+                for circleID in state.circleKeys.keys {
+                    try? state.rebuildMissingMembers(circleID: circleID)
+                }
+            } else {
+                // Clean up any phantom stub members from previous buggy builds
+                for circleID in state.circleKeys.keys {
+                    let members = (try? ledger.listCircleMembers(circleID: circleID)) ?? []
+                    for member in members where member.publicKeyHex == "unknown" {
+                        try? ledger.removeCircleMember(circleID: circleID, deviceID: member.deviceID)
+                    }
+                }
+            }
+
             // If no active circle but Keychain has keys, activate the first one
             if state.activeCircleID == nil, let firstID = state.circleKeys.keys.first {
                 state.activeCircleID = firstID
             }
-            
+
             state.circleIDs = (try? ledger.listCircles()) ?? []
         }
         
@@ -185,14 +222,16 @@ public final class AppState {
     }
 
     /// Register a new circle after a successful handshake.
-    public func addCircle(circleID: String, circleKey: CircleKey) throws {
-        // Store encrypted circle name (use circle ID as placeholder name)
-        let encryptedName = Data(circleID.utf8)
-        try ledger.insertCircle(circleID: circleID, encryptedName: encryptedName)
-        
+    public func addCircle(circleID: String, circleKey: CircleKey, encryptedName: Data? = nil) throws {
+        let name = encryptedName ?? Data(circleID.utf8)
+        try ledger.insertCircle(circleID: circleID, encryptedName: name)
+
         // Persist to Keychain (skip for in-memory test DBs)
         if ledger.path != ":memory:" {
             try KeychainService.shared.saveCircleKey(circleKey, for: circleID)
+            // Back up circle metadata
+            let meta = CircleMeta(circleID: circleID, encryptedName: name)
+            KeychainService.shared.saveCircleMeta(meta, for: circleID)
         }
         circleKeys[circleID] = circleKey
         circleIDs = try ledger.listCircles()
@@ -220,6 +259,8 @@ public final class AppState {
     public func removeCircle(_ circleID: String) throws {
         try ledger.deleteCircle(circleID: circleID)
         KeychainService.shared.deleteCircleKey(for: circleID)
+        KeychainService.shared.deletePeerMembers(for: circleID)
+        KeychainService.shared.deleteCircleMeta(for: circleID)
         circleKeys.removeValue(forKey: circleID)
         if activeCircleID == circleID {
             activeCircleID = nil
@@ -227,8 +268,121 @@ public final class AppState {
         circleIDs = try ledger.listCircles()
     }
 
+    // MARK: - Circle Member Management
+
+    /// Add a circle member to both the Ledger and Keychain backup.
+    /// Use this instead of calling ledger.insertCircleMember() directly.
+    public func addCircleMember(
+        circleID: String,
+        deviceID: String,
+        publicKeyHex: String,
+        callsign: String,
+        localAlias: String? = nil
+    ) throws {
+        try ledger.insertCircleMember(
+            circleID: circleID,
+            deviceID: deviceID,
+            publicKeyHex: publicKeyHex,
+            callsign: callsign
+        )
+        if let alias = localAlias {
+            try? ledger.setMemberAlias(circleID: circleID, deviceID: deviceID, alias: alias)
+        }
+        // Backup to Keychain (skip in test mode)
+        if ledger.path != ":memory:" {
+            backupPeerToKeychain(circleID: circleID, deviceID: deviceID,
+                                 publicKeyHex: publicKeyHex, callsign: callsign,
+                                 localAlias: localAlias)
+        }
+    }
+
+    /// Update a member's local alias in both the Ledger and Keychain backup.
+    public func setMemberAlias(circleID: String, deviceID: String, alias: String?) throws {
+        try ledger.setMemberAlias(circleID: circleID, deviceID: deviceID, alias: alias)
+        if ledger.path != ":memory:" {
+            backupPeerToKeychain(circleID: circleID, deviceID: deviceID,
+                                 publicKeyHex: "", callsign: "", localAlias: alias,
+                                 updateAliasOnly: true)
+        }
+    }
+
+    /// Update a circle's local alias in both the Ledger and Keychain backup.
+    public func setCircleAlias(circleID: String, alias: String?) throws {
+        try ledger.setCircleAlias(circleID: circleID, alias: alias)
+        if ledger.path != ":memory:" {
+            var meta = KeychainService.shared.loadCircleMeta(for: circleID)
+                ?? CircleMeta(circleID: circleID, encryptedName: Data(circleID.utf8))
+            meta.localAlias = alias
+            KeychainService.shared.saveCircleMeta(meta, for: circleID)
+        }
+    }
+
+    /// Rebuild missing circle_members from artifact sender_ids after a re-sync.
+    public func rebuildMissingMembers(circleID: String) throws {
+        let existingMembers = try ledger.listCircleMembers(circleID: circleID)
+        let knownDeviceIDs = Set(existingMembers.map(\.deviceID))
+
+        let senderIDs = try ledger.distinctSenderIDs(circleID: circleID)
+        let missingIDs = senderIDs.filter { !knownDeviceIDs.contains($0) && !$0.isEmpty }
+
+        guard !missingIDs.isEmpty else { return }
+
+        // Check Keychain backup first
+        let backedUpPeers = KeychainService.shared.loadPeerMembers(for: circleID)
+        let peerLookup = Dictionary(backedUpPeers.map { ($0.deviceID, $0) },
+                                    uniquingKeysWith: { a, _ in a })
+
+        for senderID in missingIDs {
+            if let peer = peerLookup[senderID] {
+                try? ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: peer.deviceID,
+                    publicKeyHex: peer.publicKeyHex,
+                    callsign: peer.callsign
+                )
+                if let alias = peer.localAlias {
+                    try? ledger.setMemberAlias(circleID: circleID, deviceID: peer.deviceID, alias: alias)
+                }
+            } else {
+                // Stub entry: deviceID known from artifacts, derive callsign from prefix
+                let stubCallsign = String(senderID.prefix(8)).uppercased()
+                try? ledger.insertCircleMember(
+                    circleID: circleID,
+                    deviceID: senderID,
+                    publicKeyHex: "unknown",
+                    callsign: stubCallsign
+                )
+            }
+        }
+    }
+
     /// Refresh circle list from ledger.
     public func refreshCircles() throws {
         circleIDs = try ledger.listCircles()
+    }
+
+    // MARK: - Private Helpers
+
+    private func backupPeerToKeychain(
+        circleID: String,
+        deviceID: String,
+        publicKeyHex: String,
+        callsign: String,
+        localAlias: String?,
+        updateAliasOnly: Bool = false
+    ) {
+        var peers = KeychainService.shared.loadPeerMembers(for: circleID)
+        if let idx = peers.firstIndex(where: { $0.deviceID == deviceID }) {
+            if updateAliasOnly {
+                peers[idx].localAlias = localAlias
+            } else {
+                peers[idx] = PeerMember(deviceID: deviceID, publicKeyHex: publicKeyHex,
+                                        callsign: callsign, localAlias: localAlias)
+            }
+        } else if !updateAliasOnly {
+            peers.append(PeerMember(deviceID: deviceID, publicKeyHex: publicKeyHex,
+                                    callsign: callsign, localAlias: localAlias))
+        }
+        KeychainService.shared.savePeerMembers(peers, for: circleID)
     }
 }

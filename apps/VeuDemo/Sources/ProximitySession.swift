@@ -29,6 +29,10 @@ struct ProximityHandshakePayload: Codable {
     let publicKey: Data       // 32-byte X25519 public key
     let circleID: String      // UUID string
     let role: String          // "initiator" or "responder"
+    // Identity fields (added for correct peer resolution after sync)
+    let identityPublicKeyHex: String?   // Ed25519 signing public key (hex)
+    let deviceID: String?               // Derived device ID
+    let callsign: String?               // Derived callsign
 }
 
 /// Manages MultipeerConnectivity + Nearby Interaction for proximity-based handshakes.
@@ -79,6 +83,10 @@ final class ProximitySession: NSObject {
 
     private var localPublicKey: Data?
     private var localCircleID: String?
+    // Identity metadata for correct peer resolution
+    var localIdentityPublicKeyHex: String?
+    var localDeviceID: String?
+    var localCallsign: String?
 
     // MARK: - Lifecycle
 
@@ -190,7 +198,10 @@ final class ProximitySession: NSObject {
         let payload = ProximityHandshakePayload(
             publicKey: pubKey,
             circleID: localCircleID ?? "",
-            role: role == .initiator ? "initiator" : "responder"
+            role: role == .initiator ? "initiator" : "responder",
+            identityPublicKeyHex: localIdentityPublicKeyHex,
+            deviceID: localDeviceID,
+            callsign: localCallsign
         )
 
         do {

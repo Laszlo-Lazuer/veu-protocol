@@ -5,12 +5,10 @@ import Foundation
 /// `BurnEngine` tracks which artifact keys have been burned and provides helpers for
 /// zero-filling key material in memory.
 ///
-/// # Production Notes
-/// TODO: In production, `burn(artifactKey:)` must also:
-///   1. Delete the corresponding key reference from the Secure Enclave.
-///   2. Publish a signed **Tombstone Revocation Packet** to the Circle's sync channel
-///      so that peer devices can remove their copies of the Artifact Key from their
-///      local Circle Ledgers.
+/// - Important: This POC implementation uses undefined-behaviour `memset` on immutable
+///   memory. For production key destruction, use `SquirrelyeyeSecurityCore.BurnEngine`
+///   which provides hardware-guaranteed Keychain-based key deletion.
+@available(*, deprecated, message: "Use SquirrelyeyeSecurityCore.BurnEngine for production key destruction")
 public final class BurnEngine {
     private var burnedIDs = Set<UUID>()
 

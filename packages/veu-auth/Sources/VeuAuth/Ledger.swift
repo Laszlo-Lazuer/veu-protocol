@@ -397,6 +397,28 @@ public final class Ledger {
         return results
     }
 
+    /// Fetch distinct sender device IDs from artifacts in a circle.
+    /// Used to rebuild circle_members after re-sync.
+    ///
+    /// - Parameter circleID: The Circle to query.
+    /// - Returns: An array of unique sender_id strings (excludes NULL senders).
+    public func distinctSenderIDs(circleID: String) throws -> [String] {
+        let sql = "SELECT DISTINCT sender_id FROM artifacts WHERE circle_id = ? AND sender_id IS NOT NULL AND sync_state != 'purged'"
+        var stmtPtr: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmtPtr, nil) == SQLITE_OK, let stmt = stmtPtr else {
+            throw VeuAuthError.ledgerError("Prepare failed: \(lastErrorMessage)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_bind_text(stmt, 1, (circleID as NSString).utf8String, -1, nil)
+
+        var results: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return results
+    }
+
     /// Purge an artifact (Burn): set sync_state to 'purged' and record the purge time.
     ///
     /// - Parameter cid: The CID of the artifact to purge.

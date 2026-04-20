@@ -9,6 +9,8 @@ options:
 packages:
   VeuApp:
     path: ../../packages/veu-app
+  SquirrelyeyeSecurityCore:
+    path: ../../packages/veu-app/../../../squirrelyeye-security-core
 
 targets:
   VeuDemo:
@@ -34,6 +36,7 @@ targets:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: RELEASE
     dependencies:
       - package: VeuApp
+      - package: SquirrelyeyeSecurityCore
       - sdk: MultipeerConnectivity.framework
       - sdk: NearbyInteraction.framework
     resources:

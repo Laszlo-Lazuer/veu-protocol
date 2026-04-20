@@ -70,6 +70,7 @@ public final class HandshakeViewModel {
         let deadLink = try session.initiate(ttl: DeadLink.defaultTTL)
         deadLinkURI = deadLink.toURI()
         phase = session.phase
+        persistSnapshot()
     }
 
     /// Step 2 (Initiator): Receive responder's public key data (from QR scan or network).
@@ -78,6 +79,7 @@ public final class HandshakeViewModel {
         shortCode = session.shortCode
         auraColorHex = session.auraColorHex
         phase = session.phase
+        persistSnapshot()
     }
 
     // MARK: - Responder Flow
@@ -89,6 +91,7 @@ public final class HandshakeViewModel {
         shortCode = session.shortCode
         auraColorHex = session.auraColorHex
         phase = session.phase
+        persistSnapshot()
         return publicKeyData
     }
 
@@ -116,6 +119,7 @@ public final class HandshakeViewModel {
         try session.confirm()
         circleKey = session.circleKey
         phase = session.phase
+        clearSnapshot()
 
         // Register the new circle in AppState
         if let key = circleKey {
@@ -129,6 +133,7 @@ public final class HandshakeViewModel {
         session.reject()
         phase = session.phase
         errorMessage = "Handshake rejected: codes did not match"
+        clearSnapshot()
     }
 
     /// Mark the Dead Link as expired.
@@ -136,5 +141,40 @@ public final class HandshakeViewModel {
         session.expire()
         phase = session.phase
         errorMessage = "Dead Link expired"
+        clearSnapshot()
+    }
+
+    // MARK: - Snapshot Persistence
+
+    /// Restore a HandshakeViewModel from a previously saved session snapshot.
+    /// Returns nil if no snapshot exists or if the snapshot has expired.
+    public static func restore(appState: AppState) -> HandshakeViewModel? {
+        guard let snapshot = KeychainService.shared.loadHandshakeSnapshot() else { return nil }
+        guard !snapshot.isExpired else {
+            KeychainService.shared.clearHandshakeSnapshot()
+            return nil
+        }
+        guard let session = HandshakeSession.restore(from: snapshot) else {
+            KeychainService.shared.clearHandshakeSnapshot()
+            return nil
+        }
+
+        let vm = HandshakeViewModel(appState: appState, circleID: snapshot.circleID)
+        vm.session = session
+        vm.phase = session.phase
+        vm.shortCode = session.shortCode
+        vm.auraColorHex = session.auraColorHex
+        vm.circleKey = session.circleKey
+        vm.deadLinkURI = snapshot.deadLinkURI
+        return vm
+    }
+
+    private func persistSnapshot() {
+        guard let snapshot = session.exportSnapshot() else { return }
+        KeychainService.shared.saveHandshakeSnapshot(snapshot)
+    }
+
+    private func clearSnapshot() {
+        KeychainService.shared.clearHandshakeSnapshot()
     }
 }

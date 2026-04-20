@@ -12,8 +12,8 @@
 		222128BE1140D4B2CE0CF689 /* ProximitySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */; };
 		4C6DF7AA427F40E57F6A9855 /* MultipeerConnectivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34E3966C5F4A4231DE6F1769 /* MultipeerConnectivity.framework */; };
 		5A5E1402DDC0BC55E45F4156 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F3AA7928FFE73127F07721 /* AppCoordinator.swift */; };
+		7B456A87D63D146555C3CF12 /* SquirrelyeyeSecurityCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6A18116AA0E5128376AF5921 /* SquirrelyeyeSecurityCore */; };
 		8D56624AC4BE033DE4D3CAD8 /* VeuApp in Frameworks */ = {isa = PBXBuildFile; productRef = B9E2AA64DA70016AF8EA2575 /* VeuApp */; };
-		A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */; };
 		B0228E5437E38AE54D89E511 /* DemoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 217FD2B80CA48B526D87EFBA /* DemoRootView.swift */; };
 		EAB47BBB10498BEC4B063943 /* VeuDemoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */; };
 		F1BC7D8AE93E2DD6ABAC3BF2 /* CameraCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */; };
@@ -25,12 +25,12 @@
 		1FB78F64653F7DC9AC89AD07 /* ProximitySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProximitySession.swift; sourceTree = "<group>"; };
 		217FD2B80CA48B526D87EFBA /* DemoRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoRootView.swift; sourceTree = "<group>"; };
 		34E3966C5F4A4231DE6F1769 /* MultipeerConnectivity.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MultipeerConnectivity.framework; path = System/Library/Frameworks/MultipeerConnectivity.framework; sourceTree = SDKROOT; };
+		3BA133F5DC9532FED7892A22 /* squirrelyeye-security-core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "squirrelyeye-security-core"; path = "../../../squirrelyeye-security-core"; sourceTree = SOURCE_ROOT; };
 		409C07FDD962A59F6CE4C0E2 /* NearbyInteraction.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NearbyInteraction.framework; path = System/Library/Frameworks/NearbyInteraction.framework; sourceTree = SDKROOT; };
 		5A5B9F79E06DD24EDC9636F2 /* VeuDemo.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VeuDemo.entitlements; sourceTree = "<group>"; };
 		9702EA4BE0A8256C23C9155F /* VeuDemoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VeuDemoApp.swift; sourceTree = "<group>"; };
 		9E51303EB4336A9287405B3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D26FF5D58A372992405782B7 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
-		D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		DDEDA00116456D774D67AAB5 /* veu-app */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "veu-app"; path = "../../packages/veu-app"; sourceTree = SOURCE_ROOT; };
 		EBF2405D90F415E980E1D1DA /* CameraCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureView.swift; sourceTree = "<group>"; };
 		EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VeuDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -42,6 +42,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8D56624AC4BE033DE4D3CAD8 /* VeuApp in Frameworks */,
+				7B456A87D63D146555C3CF12 /* SquirrelyeyeSecurityCore in Frameworks */,
 				4C6DF7AA427F40E57F6A9855 /* MultipeerConnectivity.framework in Frameworks */,
 				1A4B7F25210261BA5E4215FB /* NearbyInteraction.framework in Frameworks */,
 			);
@@ -61,6 +62,7 @@
 		49012D2C3C17C29D05ABB609 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
+				3BA133F5DC9532FED7892A22 /* squirrelyeye-security-core */,
 				DDEDA00116456D774D67AAB5 /* veu-app */,
 			);
 			name = Packages;
@@ -85,7 +87,6 @@
 		B079BA376C76C9F5568B2811 = {
 			isa = PBXGroup;
 			children = (
-				D7F4B28A1C6E93F0A5D02B47 /* Assets.xcassets */,
 				49012D2C3C17C29D05ABB609 /* Packages */,
 				891399D3B6A6D799B9F0F389 /* Sources */,
 				B4F0E39EF1E80319535D7FF0 /* Frameworks */,
@@ -110,7 +111,6 @@
 			buildConfigurationList = 55B57DDEFC805467B7EDF546 /* Build configuration list for PBXNativeTarget "VeuDemo" */;
 			buildPhases = (
 				4931EC50B240A16744C70548 /* Sources */,
-				E5A9B72C3F1D084697C2E0A4 /* Resources */,
 				F47113528269B4FAC730B764 /* Frameworks */,
 			);
 			buildRules = (
@@ -120,6 +120,7 @@
 			name = VeuDemo;
 			packageProductDependencies = (
 				B9E2AA64DA70016AF8EA2575 /* VeuApp */,
+				6A18116AA0E5128376AF5921 /* SquirrelyeyeSecurityCore */,
 			);
 			productName = VeuDemo;
 			productReference = EC411FC3C821D5BA6ACFD0DC /* VeuDemo.app */;
@@ -132,7 +133,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1500;
+				LastUpgradeCheck = 2600;
 			};
 			buildConfigurationList = 28A2F1FE805847DD13E46DBE /* Build configuration list for PBXProject "VeuDemo" */;
 			developmentRegion = en;
@@ -144,6 +145,7 @@
 			mainGroup = B079BA376C76C9F5568B2811;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				253DDDE2DCBF205C0D7F15D6 /* XCLocalSwiftPackageReference "../../packages/veu-app/../../../squirrelyeye-security-core" */,
 				1E964B206D19C09832ACA106 /* XCLocalSwiftPackageReference "../../packages/veu-app" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -155,17 +157,6 @@
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXResourcesBuildPhase section */
-		E5A9B72C3F1D084697C2E0A4 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A3C7E91F2B4D8A60F1E05C83 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		4931EC50B240A16744C70548 /* Sources */ = {
@@ -190,7 +181,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M49YLFEMCD;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sources/Info.plist;
@@ -198,8 +189,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
+				MARKETING_VERSION = 0.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = RELEASE;
 				SWIFT_VERSION = 5.9;
@@ -213,7 +204,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Sources/VeuDemo.dev.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M49YLFEMCD;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sources/Info.plist;
@@ -221,8 +212,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.squirrelyeye.veu;
+				MARKETING_VERSION = 0.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.veu.protocol.demo;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG DEV_MODE";
 				SWIFT_VERSION = 5.9;
@@ -377,9 +368,17 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../packages/veu-app";
 		};
+		253DDDE2DCBF205C0D7F15D6 /* XCLocalSwiftPackageReference "../../packages/veu-app/../../../squirrelyeye-security-core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "../../packages/veu-app/../../../squirrelyeye-security-core";
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		6A18116AA0E5128376AF5921 /* SquirrelyeyeSecurityCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SquirrelyeyeSecurityCore;
+		};
 		B9E2AA64DA70016AF8EA2575 /* VeuApp */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = VeuApp;

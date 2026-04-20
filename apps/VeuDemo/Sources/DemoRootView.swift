@@ -85,6 +85,7 @@ struct IdentityTab: View {
 
     var body: some View {
         NavigationStack {
+            ScrollView {
             VStack(spacing: 24) {
                 AuraView(
                     seedColor: SIMD3<Float>(
@@ -107,79 +108,16 @@ struct IdentityTab: View {
                         .foregroundColor(.secondary)
                 }
 
-                if !appState.circleIDs.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Circles")
-                            .font(.headline)
-                        ForEach(appState.circleIDs, id: \.self) { id in
-                            HStack {
-                                Image(systemName: "circle.fill")
-                                    .foregroundColor(.green)
-                                    .font(.caption)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    if let alias = coordinator.circleAliases[id] {
-                                        Text(alias)
-                                            .font(.system(.caption, design: .rounded))
-                                            .fontWeight(.medium)
-                                        Text(String(id.prefix(8)) + "…")
-                                            .font(.system(.caption2, design: .monospaced))
-                                            .foregroundColor(.secondary)
-                                    } else {
-                                        Text(String(id.prefix(8)) + "…")
-                                            .font(.system(.caption, design: .monospaced))
-                                    }
-                                }
-                                Spacer()
-                                if appState.activeCircleID == id {
-                                    Text("Active")
-                                        .font(.caption2)
-                                        .foregroundColor(.green)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                try? appState.setActiveCircle(id)
-                            }
-                            .contextMenu {
-                                Button {
-                                    aliasText = coordinator.circleAliases[id] ?? ""
-                                    editingCircleAlias = id
-                                } label: {
-                                    Label("Rename Circle", systemImage: "pencil")
-                                }
-                                if appState.activeCircleID != id {
-                                    Button {
-                                        try? appState.setActiveCircle(id)
-                                    } label: {
-                                        Label("Set Active", systemImage: "checkmark.circle")
-                                    }
-                                }
-                                Button(role: .destructive) {
-                                    circleToDelete = id
-                                    showDeleteConfirm = true
-                                } label: {
-                                    Label("Delete Circle", systemImage: "trash")
-                                }
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
-                }
-
                 if !coordinator.circleMembers.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Contacts")
-                            .font(.headline)
+                    Section {
                         ForEach(coordinator.circleMembers) { member in
-                            HStack {
-                                Image(systemName: "person.fill")
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.circle.fill")
                                     .foregroundColor(.blue)
-                                    .font(.caption)
+                                    .font(.title2)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(member.displayName)
-                                        .font(.system(.caption, design: .rounded))
+                                        .font(.body)
                                         .fontWeight(.medium)
                                     if member.localAlias != nil {
                                         Text(member.callsign)
@@ -188,25 +126,95 @@ struct IdentityTab: View {
                                     }
                                 }
                                 Spacer()
-                            }
-                            .contextMenu {
                                 Button {
                                     aliasText = member.localAlias ?? ""
                                     editingMemberAlias = member.id
                                 } label: {
-                                    Label("Rename Contact", systemImage: "pencil")
+                                    Image(systemName: "pencil")
+                                        .foregroundColor(.secondary)
                                 }
                             }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 16)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(10)
                         }
+                    } header: {
+                        Text("Contacts")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(12)
                 }
 
-                Spacer()
+                if !appState.circleIDs.isEmpty {
+                    Section {
+                        ForEach(appState.circleIDs, id: \.self) { id in
+                            HStack(spacing: 12) {
+                                Image(systemName: appState.activeCircleID == id ? "circle.circle.fill" : "circle.circle")
+                                    .foregroundColor(.green)
+                                    .font(.title2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if let alias = coordinator.circleAliases[id] {
+                                        Text(alias)
+                                            .font(.body)
+                                            .fontWeight(.medium)
+                                        Text(id)
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.5)
+                                    } else {
+                                        Text(id)
+                                            .font(.system(.subheadline, design: .monospaced))
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.5)
+                                    }
+                                }
+                                Spacer()
+                                if appState.activeCircleID == id {
+                                    Text("Active")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.green)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(Color.green.opacity(0.15))
+                                        .clipShape(Capsule())
+                                }
+                                Button {
+                                    aliasText = coordinator.circleAliases[id] ?? ""
+                                    editingCircleAlias = id
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .foregroundColor(.secondary)
+                                }
+                                Button {
+                                    circleToDelete = id
+                                    showDeleteConfirm = true
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 16)
+                            .background(Color(.secondarySystemGroupedBackground))
+                            .cornerRadius(10)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                coordinator.switchCircle(to: id)
+                            }
+                        }
+                    } header: {
+                        Text("Circles")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
             }
             .padding()
+            }
             .navigationTitle("Identity")
             .alert("Delete Circle?", isPresented: $showDeleteConfirm) {
                 Button("Cancel", role: .cancel) {
@@ -214,7 +222,7 @@ struct IdentityTab: View {
                 }
                 Button("Delete", role: .destructive) {
                     if let id = circleToDelete {
-                        try? appState.removeCircle(id)
+                        coordinator.deleteCircle(id)
                     }
                     circleToDelete = nil
                 }

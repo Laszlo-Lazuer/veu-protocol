@@ -89,15 +89,15 @@ public final class TimelineViewModel {
                 canReveal = true
             }
             
-            // Look up sender callsign from circle members (or use fallback)
+            // Look up sender display name: prefer local alias → callsign → nil
             let senderCallsign: String? = detail.senderID.flatMap { senderID in
                 if senderID == myDeviceID {
                     return appState.identity.callsign
                 }
-                // Try to look up from circle members
+                // Try to look up from circle members (alias takes priority)
                 if let members = try? appState.ledger.listCircleMembers(circleID: circleID),
                    let member = members.first(where: { $0.deviceID == senderID }) {
-                    return member.callsign
+                    return member.localAlias ?? member.callsign
                 }
                 return nil
             }

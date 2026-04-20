@@ -5,7 +5,7 @@ let package = Package(
     name: "VeuApp",
     platforms: [
         .iOS("26.0"),
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
         .library(
@@ -19,6 +19,7 @@ let package = Package(
         .package(name: "VeuGlaze", path: "../veu-glaze"),
         .package(name: "VeuGhost", path: "../veu-ghost"),
         .package(name: "VeuMesh", path: "../veu-mesh"),
+        .package(name: "SquirrelyeyeSecurityCore", path: "../../../squirrelyeye-security-core"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0")
     ],
     targets: [
@@ -30,6 +31,7 @@ let package = Package(
                 .product(name: "VeuGlaze", package: "VeuGlaze"),
                 .product(name: "VeuGhost", package: "VeuGhost"),
                 .product(name: "VeuMesh", package: "VeuMesh"),
+                .product(name: "SquirrelyeyeSecurityCore", package: "SquirrelyeyeSecurityCore"),
                 .product(name: "Crypto", package: "swift-crypto", condition: .when(platforms: [.linux]))
             ],
             path: "Sources/VeuApp"
