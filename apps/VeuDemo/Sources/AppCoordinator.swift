@@ -1370,14 +1370,14 @@ extension AppCoordinator: ProximitySessionDelegate {
             showIncomingCall = false
             isInVoiceRoom = false
         case .outgoingRinging(_, let device):
-            callPeerName = conversations.first(where: { $0.id == device })?.displayName ?? device
+            callPeerName = displayName(for: device)
             callStatusText = "Ringing…"
             showCallOverlay = true
-        case .incomingRinging(_, _, let callerCallsign):
-            incomingCallerName = callerCallsign
+        case .incomingRinging(_, let callerDevice, _):
+            incomingCallerName = displayName(for: callerDevice)
             showIncomingCall = true
-        case .active(_, _, let peerCallsign):
-            callPeerName = peerCallsign
+        case .active(_, let peerDevice, _):
+            callPeerName = displayName(for: peerDevice)
             callStatusText = "Connected"
             showCallOverlay = true
             showIncomingCall = false
