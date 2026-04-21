@@ -49,7 +49,7 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
     private static let centralRestoreID = "veu.ble.central"
     private static let peripheralRestoreID = "veu.ble.peripheral"
 
-    // MARK: - BLE UUIDs (derived from circle key)
+    // MARK: - Circle BLE UUIDs (derived from circle key)
 
     /// The GATT service UUID (deterministic from circle key).
     private let serviceUUID: CBUUID
@@ -59,6 +59,15 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
     private let notifyCharUUID: CBUUID
     /// Identity characteristic — read-only, returns this device's ID.
     private let identityCharUUID: CBUUID
+
+    // MARK: - Universal Relay UUIDs (hardcoded, same for ALL Veu devices)
+
+    /// Universal relay service UUID — every Veu device advertises this.
+    private static let relayServiceUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-EF0123456789")
+    /// Relay write characteristic — peers write RelayEnvelope chunks here.
+    private static let relayWriteCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-EF01234567A1")
+    /// Relay notify characteristic — subscribe to receive RelayEnvelope chunks.
+    private static let relayNotifyCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-EF01234567A2")
 
     // MARK: - Core Bluetooth
 
@@ -92,6 +101,35 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
     private var subscribedCentrals: [String: CBCentral] = [:]
     /// Map from central identifier → resolved peer device ID.
     private var centralDeviceIDs: [String: String] = [:]
+    /// Centrals that have interacted via the circle-specific service (trusted for identity reads).
+    private var circleCentrals: Set<String> = [:]
+
+    // MARK: - Relay Mesh
+
+    /// Relay GATT service (universal, not circle-specific).
+    private var relayGATTService: CBMutableService?
+    /// Relay notify characteristic instance.
+    private var relayNotifyCharacteristic: CBMutableCharacteristic?
+
+    /// Relay-only peer connections (keyed by peripheral/central identifier).
+    /// These peers are NOT in our circle — they only forward opaque blobs.
+    private var relayPeerChunkers: [String: BLEChunker] = [:]
+    /// Relay peer write handlers (keyed by identifier).
+    private var relayPeerWriteHandlers: [String: ([Data]) -> Void] = [:]
+    /// Subscribed topic prefixes for this device's circles.
+    public private(set) var subscribedTopics: Set<String> = []
+    /// Relay peers' subscribed topics (keyed by identifier).
+    private var relayPeerTopics: [String: Set<String>] = [:]
+
+    /// Dedup cache: SHA-256 prefix of payload → first seen time.
+    /// Prevents relay loops in dense meshes.
+    private var seenRelayHashes: [String: Date] = [:]
+    /// How often to evict stale dedup entries.
+    private static let dedupEvictInterval: TimeInterval = 60
+
+    /// Callback for relay envelopes that match our subscribed topics.
+    /// BLETransport delivers the inner payload to MeshNode for decryption.
+    public var onRelayDelivery: ((Data, String) -> Void)?  // (payload, topicPrefix)
 
     // MARK: - Init
 
@@ -164,11 +202,18 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
         peripheralWriteChars.removeAll()
         subscribedCentrals.removeAll()
         centralDeviceIDs.removeAll()
+        circleCentrals.removeAll()
+        relayPeerChunkers.removeAll()
+        relayPeerWriteHandlers.removeAll()
+        relayPeerTopics.removeAll()
+        seenRelayHashes.removeAll()
 
         centralManager = nil
         peripheralManager = nil
         gattService = nil
         notifyCharacteristic = nil
+        relayGATTService = nil
+        relayNotifyCharacteristic = nil
 
         state = .disconnected
         delegate?.transport(self, didChangeState: .disconnected)
@@ -202,28 +247,52 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
         )
         self.notifyCharacteristic = notifyChr
 
-        // Identity characteristic: read-only, returns our device ID
+        // Identity characteristic: read-only, dynamic value.
+        // Returns real device ID only to circle peers; relay peers get "relay".
         let identityChr = CBMutableCharacteristic(
             type: identityCharUUID,
             properties: [.read],
-            value: deviceID.data(using: .utf8),
+            value: nil,  // dynamic — handled in didReceiveRead
             permissions: [.readable]
         )
 
         let service = CBMutableService(type: serviceUUID, primary: true)
         service.characteristics = [writeChr, notifyChr, identityChr]
         self.gattService = service
-
         pm.add(service)
+
+        // Universal relay service (same UUID for ALL Veu devices)
+        if let existing = relayGATTService {
+            pm.remove(existing)
+        }
+
+        let relayWriteChr = CBMutableCharacteristic(
+            type: Self.relayWriteCharUUID,
+            properties: [.writeWithoutResponse, .write],
+            value: nil,
+            permissions: [.writeable]
+        )
+        let relayNotifyChr = CBMutableCharacteristic(
+            type: Self.relayNotifyCharUUID,
+            properties: [.notify],
+            value: nil,
+            permissions: [.readable]
+        )
+        self.relayNotifyCharacteristic = relayNotifyChr
+
+        let relayService = CBMutableService(type: Self.relayServiceUUID, primary: false)
+        relayService.characteristics = [relayWriteChr, relayNotifyChr]
+        self.relayGATTService = relayService
+        pm.add(relayService)
     }
 
     private func startAdvertising() {
         guard let pm = peripheralManager, pm.state == .poweredOn else { return }
         pm.startAdvertising([
-            CBAdvertisementDataServiceUUIDsKey: [serviceUUID],
+            CBAdvertisementDataServiceUUIDsKey: [serviceUUID, Self.relayServiceUUID],
             CBAdvertisementDataLocalNameKey: "Veu"
         ])
-        print("[BLE] Advertising started")
+        print("[BLE] Advertising started (circle + relay)")
     }
 
     // MARK: - Scanning (Central Role)
@@ -231,10 +300,10 @@ public final class BLETransport: NSObject, MeshTransportProtocol {
     private func startScanning() {
         guard let cm = centralManager, cm.state == .poweredOn else { return }
         cm.scanForPeripherals(
-            withServices: [serviceUUID],
+            withServices: [serviceUUID, Self.relayServiceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
-        print("[BLE] Scanning for service: \(serviceUUID.uuidString.prefix(8))���")
+        print("[BLE] Scanning for circle + relay services")
     }
 
     // MARK: - Connection Management
@@ -345,7 +414,7 @@ extension BLETransport: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         let key = peripheral.identifier.uuidString
         print("[BLE] Connected to peripheral: \(key.prefix(8))…")
-        peripheral.discoverServices([serviceUUID])
+        peripheral.discoverServices([serviceUUID, Self.relayServiceUUID])
     }
 
     public func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -375,11 +444,18 @@ extension BLETransport: CBPeripheralDelegate {
 
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard let services = peripheral.services else { return }
-        for service in services where service.uuid == serviceUUID {
-            peripheral.discoverCharacteristics(
-                [writeCharUUID, notifyCharUUID, identityCharUUID],
-                for: service
-            )
+        for service in services {
+            if service.uuid == serviceUUID {
+                peripheral.discoverCharacteristics(
+                    [writeCharUUID, notifyCharUUID, identityCharUUID],
+                    for: service
+                )
+            } else if service.uuid == Self.relayServiceUUID {
+                peripheral.discoverCharacteristics(
+                    [Self.relayWriteCharUUID, Self.relayNotifyCharUUID],
+                    for: service
+                )
+            }
         }
     }
 
@@ -387,15 +463,34 @@ extension BLETransport: CBPeripheralDelegate {
         guard let chars = service.characteristics else { return }
         let key = peripheral.identifier.uuidString
 
-        for chr in chars {
-            if chr.uuid == writeCharUUID {
-                peripheralWriteChars[key] = chr
-            } else if chr.uuid == notifyCharUUID {
-                // Subscribe to receive data from this peripheral
-                peripheral.setNotifyValue(true, for: chr)
-            } else if chr.uuid == identityCharUUID {
-                // Read peer's device ID
-                peripheral.readValue(for: chr)
+        if service.uuid == serviceUUID {
+            // Circle service characteristics
+            for chr in chars {
+                if chr.uuid == writeCharUUID {
+                    peripheralWriteChars[key] = chr
+                } else if chr.uuid == notifyCharUUID {
+                    peripheral.setNotifyValue(true, for: chr)
+                } else if chr.uuid == identityCharUUID {
+                    peripheral.readValue(for: chr)
+                }
+            }
+        } else if service.uuid == Self.relayServiceUUID {
+            // Relay service characteristics
+            for chr in chars {
+                if chr.uuid == Self.relayWriteCharUUID {
+                    // Store write characteristic for sending relay envelopes
+                    relayPeerWriteHandlers[key] = { [weak peripheral] chunks in
+                        guard let peripheral = peripheral else { return }
+                        for chunk in chunks {
+                            peripheral.writeValue(chunk, for: chr, type: .withoutResponse)
+                        }
+                    }
+                    relayPeerChunkers[key] = BLEChunker(mtu: max(peripheral.maximumWriteValueLength(for: .withoutResponse), 20))
+                    print("[BLE] Relay peer write ready: \(key.prefix(8))…")
+                } else if chr.uuid == Self.relayNotifyCharUUID {
+                    peripheral.setNotifyValue(true, for: chr)
+                    print("[BLE] Subscribed to relay notify: \(key.prefix(8))…")
+                }
             }
         }
     }
@@ -423,18 +518,21 @@ extension BLETransport: CBPeripheralDelegate {
             print("[BLE] Central-side peer resolved: \(peerID.prefix(8))… MTU: \(mtu)")
 
         } else if characteristic.uuid == notifyCharUUID {
-            // Incoming chunk from peripheral's notify characteristic
+            // Incoming chunk from peripheral's notify characteristic (circle)
             guard let data = characteristic.value else { return }
             if let peerID = peripheralDeviceIDs[key],
                let conn = connections[peerID] {
                 conn.feedChunk(data)
             }
+        } else if characteristic.uuid == Self.relayNotifyCharUUID {
+            // Incoming relay chunk from peripheral's relay notify characteristic
+            guard let data = characteristic.value else { return }
+            handleRelayChunk(data, fromPeer: key)
         }
     }
 
     public func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
-        // Service changed — rediscover
-        peripheral.discoverServices([serviceUUID])
+        peripheral.discoverServices([serviceUUID, Self.relayServiceUUID])
     }
 }
 
@@ -485,10 +583,21 @@ extension BLETransport: CBPeripheralManagerDelegate {
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        guard characteristic.uuid == notifyCharUUID else { return }
         let key = central.identifier.uuidString
-        subscribedCentrals[key] = central
-        print("[BLE] Central subscribed: \(key.prefix(8))… MTU: \(central.maximumUpdateValueLength)")
+        if characteristic.uuid == notifyCharUUID {
+            subscribedCentrals[key] = central
+            print("[BLE] Circle central subscribed: \(key.prefix(8))… MTU: \(central.maximumUpdateValueLength)")
+        } else if characteristic.uuid == Self.relayNotifyCharUUID {
+            // Relay peer subscribed — set up chunker and write handler for this central
+            relayPeerChunkers[key] = BLEChunker(mtu: central.maximumUpdateValueLength)
+            relayPeerWriteHandlers[key] = { [weak self] chunks in
+                guard let self = self, let pm = self.peripheralManager, let chr = self.relayNotifyCharacteristic else { return }
+                for chunk in chunks {
+                    pm.updateValue(chunk, for: chr, onSubscribedCentrals: [central])
+                }
+            }
+            print("[BLE] Relay central subscribed: \(key.prefix(8))…")
+        }
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -505,6 +614,9 @@ extension BLETransport: CBPeripheralManagerDelegate {
             if request.characteristic.uuid == writeCharUUID {
                 guard let data = request.value else { continue }
                 let centralKey = request.central.identifier.uuidString
+
+                // Mark as circle-trusted (they wrote to the circle-specific characteristic)
+                circleCentrals.insert(centralKey)
 
                 // First write from this central — we need to identify them.
                 // The peer device ID is embedded in the first message exchange
@@ -531,6 +643,12 @@ extension BLETransport: CBPeripheralManagerDelegate {
                    let conn = connections[peerID] {
                     conn.feedChunk(data)
                 }
+
+            } else if request.characteristic.uuid == Self.relayWriteCharUUID {
+                // Relay write — opaque blob from non-circle peer
+                guard let data = request.value else { continue }
+                let centralKey = request.central.identifier.uuidString
+                handleRelayChunk(data, fromPeer: centralKey)
             }
 
             // Respond to write request
@@ -542,7 +660,14 @@ extension BLETransport: CBPeripheralManagerDelegate {
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         if request.characteristic.uuid == identityCharUUID {
-            request.value = deviceID.data(using: .utf8)
+            let centralKey = request.central.identifier.uuidString
+            if circleCentrals.contains(centralKey) {
+                // Circle peer — return real device ID
+                request.value = deviceID.data(using: .utf8)
+            } else {
+                // Unknown or relay peer — return generic identifier
+                request.value = "relay".data(using: .utf8)
+            }
             peripheral.respond(to: request, withResult: .success)
         } else {
             peripheral.respond(to: request, withResult: .attributeNotFound)
@@ -552,6 +677,102 @@ extension BLETransport: CBPeripheralManagerDelegate {
     public func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
         // Called when the transmit queue has space again after a failed updateValue.
         // Could implement retry logic here if needed.
+    }
+}
+
+// MARK: - Relay Mesh Logic
+
+extension BLETransport {
+
+    /// Subscribe to a topic prefix for relay delivery.
+    /// Called by MeshNode when a circle transport starts.
+    public func subscribeToTopic(_ topicPrefix: String) {
+        subscribedTopics.insert(topicPrefix)
+        print("[BLE Relay] Subscribed to topic: \(topicPrefix.prefix(8))…")
+    }
+
+    /// Send a relay envelope to all relay-connected peers.
+    /// Used for outbound messages when no direct circle peer is in range.
+    public func sendRelayEnvelope(_ envelope: RelayEnvelope) {
+        guard let data = try? JSONEncoder().encode(envelope) else { return }
+        let chunker = BLEChunker(mtu: Self.defaultMTU)
+        let chunks = chunker.chunk(data)
+
+        // Record in dedup cache so we don't re-process our own message
+        seenRelayHashes[envelope.dedupKey] = Date()
+
+        for (peerKey, writeHandler) in relayPeerWriteHandlers {
+            // Only send to peers interested in this topic (or all if no subscription info)
+            let peerTopics = relayPeerTopics[peerKey] ?? []
+            if peerTopics.isEmpty || peerTopics.contains(envelope.topicPrefix) {
+                writeHandler(chunks)
+            }
+        }
+        print("[BLE Relay] Sent envelope (topic: \(envelope.topicPrefix.prefix(8))… ttl: \(envelope.ttl))")
+    }
+
+    /// Handle an incoming relay chunk (from either central or peripheral side).
+    private func handleRelayChunk(_ chunk: Data, fromPeer peerKey: String) {
+        // Get or create a chunker for this relay peer
+        if relayPeerChunkers[peerKey] == nil {
+            relayPeerChunkers[peerKey] = BLEChunker(mtu: Self.defaultMTU)
+        }
+        guard var chunker = relayPeerChunkers[peerKey] else { return }
+
+        guard let frame = chunker.feed(chunk) else {
+            relayPeerChunkers[peerKey] = chunker
+            return
+        }
+        relayPeerChunkers[peerKey] = chunker
+
+        // Reassembled — decode as RelayEnvelope
+        guard let envelope = try? JSONDecoder().decode(RelayEnvelope.self, from: frame) else {
+            print("[BLE Relay] Failed to decode relay envelope from \(peerKey.prefix(8))…")
+            return
+        }
+
+        processRelayEnvelope(envelope, fromPeer: peerKey)
+    }
+
+    /// Process a reassembled relay envelope: dedup, deliver if ours, forward to others.
+    private func processRelayEnvelope(_ envelope: RelayEnvelope, fromPeer: String) {
+        // Drop expired envelopes
+        guard !envelope.isExpired else {
+            print("[BLE Relay] Dropped expired envelope")
+            return
+        }
+
+        // Dedup — drop if we've seen this payload before
+        evictStaleDedup()
+        let key = envelope.dedupKey
+        guard seenRelayHashes[key] == nil else { return }
+        seenRelayHashes[key] = Date()
+
+        // Deliver to our circle transport if topic matches
+        if subscribedTopics.contains(envelope.topicPrefix) {
+            onRelayDelivery?(envelope.payload, envelope.topicPrefix)
+            print("[BLE Relay] Delivered to local circle (topic: \(envelope.topicPrefix.prefix(8))…)")
+        }
+
+        // Forward to other relay peers (decrement TTL)
+        guard let forwarded = envelope.forwarded() else { return }
+        guard let data = try? JSONEncoder().encode(forwarded) else { return }
+        let chunker = BLEChunker(mtu: Self.defaultMTU)
+        let chunks = chunker.chunk(data)
+
+        for (peerKey, writeHandler) in relayPeerWriteHandlers where peerKey != fromPeer {
+            let peerTopics = relayPeerTopics[peerKey] ?? []
+            if peerTopics.isEmpty || peerTopics.contains(envelope.topicPrefix) {
+                writeHandler(chunks)
+            }
+        }
+        print("[BLE Relay] Forwarded (topic: \(envelope.topicPrefix.prefix(8))… ttl: \(forwarded.ttl))")
+    }
+
+    /// Evict dedup entries older than maxAge.
+    private func evictStaleDedup() {
+        let cutoff = Date().addingTimeInterval(-RelayEnvelope.maxAge)
+        seenRelayHashes = seenRelayHashes.filter { $0.value > cutoff }
     }
 }
 #endif

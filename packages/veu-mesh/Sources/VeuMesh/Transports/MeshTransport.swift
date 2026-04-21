@@ -107,13 +107,24 @@ public final class MeshTransport: NSObject, MeshTransportProtocol {
         guard ttl > 0 else { return }
         guard let session = session else { return }
 
-        let envelope = MeshEnvelope(payload: data, ttl: ttl - 1, originPeerName: originPeer.displayName)
+        // Hash the origin peer name so relay nodes can detect loops without learning identity
+        let relayTag = Self.hashRelayTag(originPeer.displayName, circleKey: circleKey)
+        let envelope = MeshEnvelope(payload: data, ttl: ttl - 1, relayTag: relayTag)
         guard let envelopeData = try? JSONEncoder().encode(envelope) else { return }
 
         let targets = session.connectedPeers.filter { $0 != originPeer }
         guard !targets.isEmpty else { return }
 
         try? session.send(envelopeData, toPeers: targets, with: .reliable)
+    }
+
+    /// Produce a non-reversible relay tag from a peer name for loop detection.
+    private static func hashRelayTag(_ name: String, circleKey: Data) -> String {
+        let hmac = HMAC<SHA256>.authenticationCode(
+            for: Data(name.utf8),
+            using: SymmetricKey(data: circleKey)
+        )
+        return Data(hmac).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -215,8 +226,12 @@ extension MeshTransport: MCNearbyServiceBrowserDelegate {
 // MARK: - Mesh Envelope
 
 /// Wire format for multi-hop relay messages.
+///
+/// The `relayTag` is a non-reversible HMAC hash of the origin peer name,
+/// used only for loop detection.  Relay nodes cannot determine who sent
+/// the message.
 struct MeshEnvelope: Codable {
     let payload: Data
     let ttl: Int
-    let originPeerName: String
+    let relayTag: String
 }

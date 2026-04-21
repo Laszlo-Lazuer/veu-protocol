@@ -88,6 +88,11 @@ public final class MeshNode {
     private let deviceID: String
     private let queue: DispatchQueue
 
+    #if canImport(CoreBluetooth) && os(iOS)
+    /// Reference to BLE transport for relay envelope sending.
+    private var bleTransport: BLETransport?
+    #endif
+
     /// Create a MeshNode for a Circle.
     ///
     /// - Parameters:
@@ -129,7 +134,15 @@ public final class MeshNode {
         #if canImport(CoreBluetooth) && os(iOS)
         let ble = BLETransport(circleKey: circleKey, deviceID: deviceID)
         ble.delegate = self
+        // Subscribe to our circle's topic for relay delivery
+        let topicHash = GhostConnection.circleTopicHash(circleKey: circleKey)
+        ble.subscribeToTopic(String(topicHash.prefix(16)))
+        // Wire relay delivery → GhostNode for decryption
+        ble.onRelayDelivery = { [weak self] payload, _ in
+            self?.handleRelayDelivery(payload)
+        }
         transports.append(ble)
+        self.bleTransport = ble
         #endif
 
         // 3. Bluetooth/AWDL mesh (MultipeerConnectivity — foreground only)
@@ -218,6 +231,26 @@ public final class MeshNode {
             }
         }
     }
+
+    // MARK: - BLE Relay
+
+    #if canImport(CoreBluetooth) && os(iOS)
+    /// Handle an incoming relay-delivered payload (opaque blob that matched our topic).
+    /// Wraps it into a synthetic connection so GhostNode can decrypt and process normally.
+    private func handleRelayDelivery(_ payload: Data) {
+        let conn = RelayInboundConnection(payload: payload, circleKey: circleKey)
+        ghostNode.acceptConnection(conn)
+        // The receive callback on RelayInboundConnection delivers the single message,
+        // then the connection is implicitly dropped.
+        print("[MeshNode] Relay delivery → GhostNode pipeline")
+    }
+
+    /// Send a sealed message via the BLE relay mesh (for when no direct circle peer is in range).
+    public func sendViaRelay(_ sealedPayload: Data) {
+        let envelope = RelayEnvelope.wrap(payload: sealedPayload, circleKey: circleKey)
+        bleTransport?.sendRelayEnvelope(envelope)
+    }
+    #endif
 }
 
 // MARK: - MeshTransportDelegate
@@ -270,3 +303,68 @@ extension MeshNode: SyncEngineDelegate {
         delegate?.meshNode(self, didReceiveVoiceCall: payload)
     }
 }
+
+// MARK: - Relay Inbound Connection
+
+#if canImport(CoreBluetooth) && os(iOS)
+/// A synthetic TransportConnection that delivers a single pre-received payload.
+/// Used when the BLE relay mesh delivers an opaque blob matching our circle's topic.
+/// GhostNode accepts this connection, calls receive() once to get the message,
+/// and the connection is then effectively dead.
+final class RelayInboundConnection: TransportConnection, @unchecked Sendable {
+    var endpointDescription: String = "BLE-Relay"
+    var transportName: String = "BLE-Relay"
+
+    private let payload: Data
+    private let circleKey: Data
+    private var delivered = false
+    private let lock = NSLock()
+
+    init(payload: Data, circleKey: Data) {
+        self.payload = payload
+        self.circleKey = circleKey
+    }
+
+    func send(_ message: GhostMessage, completion: @escaping (Result<Void, VeuGhostError>) -> Void) {
+        // Relay inbound is receive-only
+        completion(.failure(.connectionFailed("Relay inbound is receive-only")))
+    }
+
+    func receive(completion: @escaping (Result<GhostMessage, VeuGhostError>) -> Void) {
+        lock.lock()
+        guard !delivered else {
+            lock.unlock()
+            // No more messages — don't call completion (connection is done)
+            return
+        }
+        delivered = true
+        lock.unlock()
+
+        // Parse the length-prefixed frame
+        guard payload.count >= 4 else {
+            completion(.failure(.decodingFailed("Relay payload too short")))
+            return
+        }
+
+        let length = UInt32(payload[0]) << 24 | UInt32(payload[1]) << 16
+                   | UInt32(payload[2]) << 8 | UInt32(payload[3])
+        let envelope = payload.dropFirst(4)
+
+        guard envelope.count == Int(length) else {
+            completion(.failure(.decodingFailed("Relay frame incomplete")))
+            return
+        }
+
+        do {
+            let message = try GhostMessage.open(envelope: Data(envelope), with: circleKey)
+            completion(.success(message))
+        } catch let error as VeuGhostError {
+            completion(.failure(error))
+        } catch {
+            completion(.failure(.decodingFailed(error.localizedDescription)))
+        }
+    }
+
+    func cancel() {}
+}
+#endif
