@@ -44,10 +44,11 @@ public extension MeshNodeDelegate {
 
 /// Multi-transport mesh coordinator for the Ghost Network.
 ///
-/// Manages three transport layers simultaneously:
+/// Manages four transport layers simultaneously:
 /// 1. **Local** (LAN/mDNS): Highest priority — same Wi-Fi / AWDL
-/// 2. **Mesh** (Bluetooth LE + AWDL): Medium priority — offline proximity relay
-/// 3. **Global** (WebSocket relay): Lowest priority — internet sync
+/// 2. **BLE** (Core Bluetooth): Background-capable — survives app backgrounding
+/// 3. **Mesh** (Bluetooth LE + AWDL via MPC): Foreground only — higher bandwidth
+/// 4. **Global** (WebSocket relay): Lowest priority — internet sync
 ///
 /// All transports feed into a single `GhostNode` which handles delta-sync.
 public final class MeshNode {
@@ -124,12 +125,19 @@ public final class MeshNode {
         local.delegate = self
         transports.append(local)
 
-        // 2. Bluetooth/AWDL mesh
+        // 2. Core Bluetooth background mesh (survives backgrounding)
+        #if canImport(CoreBluetooth) && os(iOS)
+        let ble = BLETransport(circleKey: circleKey, deviceID: deviceID)
+        ble.delegate = self
+        transports.append(ble)
+        #endif
+
+        // 3. Bluetooth/AWDL mesh (MultipeerConnectivity — foreground only)
         let mesh = MeshTransport(circleKey: circleKey, deviceName: deviceID)
         mesh.delegate = self
         transports.append(mesh)
 
-        // 3. Global relay (if configured)
+        // 4. Global relay (if configured)
         if let relayURL = relayURL {
             let global = GlobalTransport(relayURL: relayURL, circleKey: circleKey, deviceID: deviceID)
             global.delegate = self

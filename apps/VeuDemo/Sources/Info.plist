@@ -34,6 +34,8 @@
 		<string>_veu-handshake._udp</string>
 		<string>_veu-mesh._tcp</string>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Veu uses Bluetooth to maintain the encrypted mesh network in the background for offline message delivery.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Veu needs camera access to capture photos for encrypted sharing.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -49,6 +51,8 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>processing</string>
 		<string>remote-notification</string>
