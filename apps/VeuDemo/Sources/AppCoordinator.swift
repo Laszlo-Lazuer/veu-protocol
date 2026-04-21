@@ -101,6 +101,12 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var pendingInviteToken: String?
     private(set) var inviteService: InviteService?
 
+    // MARK: - Push & Background
+
+    private let pushKitManager = PushKitManager()
+    /// Standard APNs device token for background push (set via AppDelegate).
+    private var apnsToken: String?
+
     // MARK: - Internal
 
     private var handshakeVM: HandshakeViewModel?
@@ -131,6 +137,8 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
                     self.handshakeVM = restoredVM
                     self.updateHandshakeState(from: restoredVM)
                 }
+                // Wire VoIP push handler for incoming calls while backgrounded
+                self.setupPushHandlers()
             }
 
             if Thread.isMainThread {
@@ -1083,6 +1091,16 @@ final class AppCoordinator: NSObject, ObservableObject, UNUserNotificationCenter
             activeTransport = service.activeTransport ?? "Connecting…"
             networkLog.append("🟢 Mesh started (circle: \(state.activeCircleID?.prefix(8) ?? "?")…)")
             networkLog.append("🌐 Relay: \(relay.absoluteString)")
+
+            // Register APNs token with relay for background push (if available)
+            if let token = apnsToken {
+                service.registerPushToken(token)
+            }
+
+            // Forward VoIP token to voice call manager's relay transport
+            if let voipToken = pushKitManager.pushToken {
+                voiceCallManager?.pushToken = voipToken
+            }
         } catch {
             networkError = "\(error)"
             activeTransport = "Offline"
@@ -1194,6 +1212,102 @@ extension AppCoordinator: ProximitySessionDelegate {
             if let error = error {
                 print("[Notifications] Failed to fire: \(error)")
             }
+        }
+    }
+
+    // MARK: - Push Token & Background Wake
+
+    /// Wire PushKit VoIP push handler for incoming calls while backgrounded/killed.
+    private func setupPushHandlers() {
+        pushKitManager.onIncomingPush = { [weak self] callID, callerName, payload in
+            guard let self = self else { return }
+            if self.voiceCallManager == nil { self.setupVoiceCallManager() }
+            guard let manager = self.voiceCallManager else { return }
+
+            let callerDeviceID = payload["caller_device_id"] as? String ?? "unknown"
+            // Resolve alias if available, fall back to push payload name
+            let resolvedName: String
+            if let member = self.circleMembers.first(where: { $0.id == callerDeviceID }) {
+                resolvedName = member.displayName
+            } else {
+                resolvedName = callerName
+            }
+
+            // MUST report to CallKit before PushKit completion handler returns
+            manager.callKitManager.reportIncomingCall(callID: callID, callerName: resolvedName) { error in
+                guard error == nil else { return }
+                let voicePayload = GhostMessage.VoiceCallPayload(
+                    callID: callID,
+                    action: .offer,
+                    senderDeviceID: callerDeviceID,
+                    senderCallsign: resolvedName,
+                    recipientDeviceID: manager.deviceID
+                )
+                DispatchQueue.main.async {
+                    manager.handleIncomingOffer(voicePayload)
+                }
+            }
+        }
+    }
+
+    /// Register the standard APNs device token (from AppDelegate) for background push.
+    func registerAPNsToken(_ token: String) {
+        apnsToken = token
+        // Forward to NetworkService if running (artifact relay uses this for content-available push)
+        networkService?.registerPushToken(token)
+        print("[Push] APNs token registered: \(token.prefix(16))…")
+    }
+
+    /// Handle a background push notification (content-available) from the artifact relay.
+    func handleBackgroundPush(userInfo: [AnyHashable: Any], completion: @escaping (UIBackgroundFetchResult) -> Void) {
+        let taskID = UIApplication.shared.beginBackgroundTask {
+            completion(.failed)
+        }
+
+        // Bootstrap if needed (app may have been terminated)
+        if appState == nil {
+            bootstrap(autoStartNetwork: false, requestNotifications: false)
+        }
+
+        // Start network to pull missed artifacts
+        startNetwork()
+
+        guard networkRunning else {
+            completion(.noData)
+            UIApplication.shared.endBackgroundTask(taskID)
+            return
+        }
+
+        // Listen for incoming artifacts
+        var received = false
+        let originalCallback = networkService?.onArtifactReceived
+        networkService?.onArtifactReceived = { [weak self] cid, circleID, transport in
+            originalCallback?(cid, circleID, transport)
+            if !received {
+                received = true
+                self?.fireVagueNotification()
+            }
+        }
+
+        // Allow 25 seconds for pull, then wrap up
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25) { [weak self] in
+            // Restore original callback
+            self?.networkService?.onArtifactReceived = originalCallback
+            completion(received ? .newData : .noData)
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
+    }
+
+    /// Graceful background transition: flush pending work before iOS suspends.
+    func handleBackgroundTransition() {
+        let taskID = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.networkService?.stop()
+        }
+
+        // Allow 5 seconds for in-flight relay sends to complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.scheduleBackgroundSync()
+            UIApplication.shared.endBackgroundTask(taskID)
         }
     }
 
